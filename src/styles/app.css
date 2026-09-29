@@ -1,0 +1,14 @@
+/* SIDE QUEST brand overrides on top of the Modernist design system (modernist.css). */
+:root{--color-bg:#fcf9ed;--color-surface:#f2ede0;--sq-gold:#e6a82e}body{margin:0;background:var(--color-bg)}a{color:var(--color-accent-700)}a:hover{color:var(--color-accent)}select.input{appearance:auto}
+
+/* App shell */
+html, body { height: 100%; margin: 0; }
+#root, #root > .sc-host { height: 100%; }
+
+/* Hover / active / focus states (generated from the components' style-hover rules) */
+.sqp0:hover{background:var(--color-accent) !important}
+.sqp1:hover{color:var(--color-accent) !important}
+.sqp2:hover{background:var(--color-neutral-800) !important}
+.sqp3:hover{background:var(--color-surface) !important}
+.sqp4:hover{border-color:var(--color-accent) !important}
+.sqp5:hover{border-color:var(--color-text) !important}
