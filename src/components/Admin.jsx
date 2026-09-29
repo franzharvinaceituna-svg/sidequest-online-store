@@ -115,7 +115,7 @@ export default class Admin extends React.Component {
       if (!A.isAdmin()) return Object.assign(v, { gateDenied: true });
       const prof = A.profile() || {};
       v.isSignedIn = true;
-      v.roleLabel = prof.role === 'OWNER' ? 'Owner' : 'Staff';
+      v.roleLabel = ({ OWNER: 'Owner', STAFF: 'Staff' })[String(prof.role || '').toUpperCase()] || 'Admin · role not loaded';
     }
     this.adminVals(v, S, this.props.tab || 'dashboard');
     return v;

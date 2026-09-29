@@ -112,12 +112,19 @@ import { createClient } from '@supabase/supabase-js'; // bundled from npm
   }
   async function refreshAll() { await loadCatalog(); await loadAdmin(); emit(); }
   async function onSession(session) {
-    auth.session = session; auth.isAdmin = false; auth.profile = null;
+    auth.session = session; auth.isAdmin = false; auth.profile = null; auth.profileError = null;
     if (session) {
       try {
         auth.isAdmin = !!(await call(() => sb.rpc('is_admin')));
-        if (auth.isAdmin) auth.profile = (await call(() => sb.from('admin_profiles').select('*').eq('user_id', session.user.id).maybeSingle())) || null;
       } catch (e) { console.warn('[SIDE QUEST] admin check failed', e); }
+      // Role comes from the signed-in user's own admin_profiles row. If it can't be read, the role is UNKNOWN (never assumed).
+      if (auth.isAdmin) {
+        try {
+          auth.profile = (await call(() => sb.from('admin_profiles').select('user_id, display_name, role, permissions, active').eq('user_id', session.user.id).maybeSingle())) || null;
+          auth.profileError = auth.profile ? null : 'No admin_profiles row returned for this user.';
+        } catch (e) { auth.profileError = e.message; }
+        if (auth.profileError) console.warn('[SIDE QUEST] Could not read admin role from admin_profiles:', auth.profileError);
+      }
     }
     auth.ready = true;
     try { await loadAdmin(); } catch (e) { console.warn('[SIDE QUEST] admin data failed', e); }
@@ -321,6 +328,7 @@ import { createClient } from '@supabase/supabase-js'; // bundled from npm
       user: () => auth.session ? auth.session.user : null,
       isAdmin: () => auth.isAdmin,
       profile: () => auth.profile,
+      profileError: () => auth.profileError || null,
       async signIn(email, password) {
         try { await call(() => sb.auth.signInWithPassword({ email, password })); return ok(); } catch (e) { return fail(e.message); }
       },
