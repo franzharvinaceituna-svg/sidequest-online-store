@@ -1,15 +1,16 @@
 // SIDE QUEST — StoreApp
-// Ported from SIDE QUEST Store.dc.html (Claude Design Component) to React.
+// Ported from SIDE QUEST Store v5.dc.html (approved V5 design) to React.
 import React from 'react';
 import { L, S, T } from './dc-compat.js';
 import Admin from './Admin.jsx';
-import ProductCard from './ProductCard.jsx';
-import ProductImage from './ProductImage.jsx';
+import ProductCardV3 from './ProductCardV3.jsx';
+import ProductImageV3 from './ProductImageV3.jsx';
 
 export default class StoreApp extends React.Component {
   emptyF() {
     return {
       cat: '',
+      group: '',
       sub: '',
       min: '',
       max: '',
@@ -72,7 +73,13 @@ export default class StoreApp extends React.Component {
   routePatch(r) {
     const patch = { route: r, qty: 1, img: 0, menuOpen: false, filtersOpen: false, orderView: null };
     if (r.page === 'shop') {
-      patch.f = { ...this.emptyF(), sort: this.state.f.sort, cat: r.params.cat || '', sale: r.params.sale === '1' };
+      patch.f = {
+        ...this.emptyF(),
+        sort: r.params.sort || this.state.f.sort,
+        cat: r.params.cat || '',
+        group: r.params.group || '',
+        sale: r.params.sale === '1',
+      };
       patch.q = r.params.q || '';
     }
     return patch;
@@ -116,6 +123,12 @@ export default class StoreApp extends React.Component {
   setF(patch) {
     this.setState((s) => ({ f: { ...s.f, ...patch } }));
   }
+  isChase(p) {
+    return (
+      (p.tags || []).some((t) => String(t).toLowerCase() === 'chase') ||
+      (p.product_type === 'SINGLE' && (!!p.featured || window.SQStore.effectivePrice(p) >= 5000))
+    );
+  }
   vm(p) {
     const S = window.SQStore,
       av = p.available_quantity,
@@ -124,6 +137,28 @@ export default class StoreApp extends React.Component {
     const a = SQView.availOf(av),
       b = SQView.badgeOf(p),
       meta = SQView.metaOf(p);
+    const badges = [];
+    if (av <= 0) badges.push({ t: 'SOLD OUT', bg: 'var(--color-neutral-700)', fg: 'var(--color-bg)' });
+    else {
+      if (onSale)
+        badges.push({
+          t: 'SALE −' + Math.round((1 - p.sale_price / p.price) * 100) + '%',
+          bg: 'var(--color-accent)',
+          fg: 'var(--color-bg)',
+        });
+      if (this.isChase(p)) badges.push({ t: 'CHASE', bg: 'var(--sq-gold)', fg: 'var(--color-text)' });
+      if (Date.now() - new Date(p.created_at).getTime() < 14 * 864e5)
+        badges.push({ t: 'NEW', bg: 'var(--color-text)', fg: 'var(--color-bg)' });
+    }
+    const metaTags = [];
+    if (p.product_type === 'GRADED_CARD' && p.grading_company)
+      metaTags.push({
+        l: p.grading_company + ' ' + p.grade,
+        bg: 'color-mix(in srgb, var(--sq-gold) 35%, transparent)',
+      });
+    if (p.product_type === 'SINGLE' && p.condition) metaTags.push({ l: p.condition, bg: 'transparent' });
+    if (['SINGLE', 'GRADED_CARD', 'SEALED'].includes(p.product_type) && p.language)
+      metaTags.push({ l: p.language, bg: 'transparent' });
     return {
       id: p.product_id,
       href: '#/product/' + p.product_id,
@@ -156,6 +191,27 @@ export default class StoreApp extends React.Component {
       },
       onAdd: () => this.add(p.product_id, 1),
       image: SQView.imgVM(p, 0),
+      badges: badges.slice(0, 2),
+      metaTags,
+      isNew: Date.now() - new Date(p.created_at).getTime() < 14 * 864e5,
+      saleText: onSale ? 'Sale −' + Math.round((1 - p.sale_price / p.price) * 100) + '%' : '',
+      subline:
+        p.product_type === 'SINGLE' || p.product_type === 'GRADED_CARD'
+          ? [p.set, p.card_number ? '#' + p.card_number : ''].filter(Boolean).join(' · ')
+          : [SQView.TYPES[p.product_type], p.subcategory]
+              .filter(Boolean)
+              .filter((x, i, a) => a.indexOf(x) === i)
+              .join(' · '),
+      details:
+        p.product_type === 'GRADED_CARD'
+          ? [p.grading_company && p.grade != null ? p.grading_company + ' ' + p.grade : '', p.language]
+              .filter(Boolean)
+              .join(' · ')
+          : p.product_type === 'SINGLE'
+            ? [p.condition, p.language].filter(Boolean).join(' · ')
+            : p.product_type === 'SEALED'
+              ? p.language || ''
+              : '',
     };
   }
   renderVals() {
@@ -201,7 +257,7 @@ export default class StoreApp extends React.Component {
     const st = this.state,
       r = st.route,
       page = r.page,
-      mobile = st.w < 1024;
+      mobile = st.w < 768;
     const cartCount = S.cartCount(),
       wishCount = S.wishlist().length;
     const cats = S.categories();
@@ -220,17 +276,22 @@ export default class StoreApp extends React.Component {
       'admin',
     ];
     const pg = known.includes(page) ? page : 'notfound';
+    const HOBBY_CATS = ['accessories', 'collectibles', 'other'];
     const navActive = (k) =>
       pg === 'shop' &&
-      ((k === 'all' && !st.f.cat && !st.f.sale) || (k === 'sale' && st.f.sale) || (k === st.f.cat && !st.f.sale));
+      ((k === 'all' && !st.f.cat && !st.f.group && !st.f.sale) ||
+        (k === 'hobbies' && (st.f.group === 'hobbies' || HOBBY_CATS.includes(st.f.cat))) ||
+        (k === st.f.cat && !st.f.sale));
     const navItems = [
-      { k: 'all', label: 'SHOP ALL', href: '#/shop' },
-      ...cats.map((c) => ({ k: c.category_id, label: c.name.toUpperCase(), href: '#/shop?cat=' + c.category_id })),
-      { k: 'sale', label: 'SALE', href: '#/shop?sale=1' },
+      { k: 'all', label: 'Shop', href: '#/shop' },
+      { k: 'pokemon', label: 'Pokémon', href: '#/shop?cat=pokemon' },
+      { k: 'psa', label: 'Graded', href: '#/shop?cat=psa' },
+      { k: 'sealed', label: 'Sealed', href: '#/shop?cat=sealed' },
+      { k: 'hobbies', label: 'Hobbies', href: '#/shop?group=hobbies' },
     ].map((n) => ({
       ...n,
-      color: n.k === 'sale' ? 'var(--color-accent)' : navActive(n.k) ? 'var(--color-accent)' : 'var(--color-text)',
-      menuColor: n.k === 'sale' ? 'var(--color-accent)' : 'var(--color-text)',
+      color: navActive(n.k) ? 'var(--color-accent)' : 'var(--color-text)',
+      menuColor: 'var(--color-text)',
       bar: navActive(n.k) ? 'var(--color-accent)' : 'transparent',
     }));
     const red = 'var(--color-accent)',
@@ -268,19 +329,70 @@ export default class StoreApp extends React.Component {
           location.hash = '#/shop?q=' + encodeURIComponent(this.state.q.trim());
         }
       },
-      navGap: st.w < 1180 ? '18px' : '32px',
+      navGap: st.w < 1100 ? '20px' : '28px',
+      wideHeader: st.w >= 1100,
+      tabletSearch: !mobile && st.w < 1100,
+      stripJustify: mobile ? 'center' : 'space-between',
+      pagePad: mobile ? '20px 16px 48px' : '32px clamp(16px,3vw,32px) 80px',
+      pagePad404: mobile ? '40px 16px 64px' : '64px clamp(16px,3vw,32px) 96px',
+      denseCards: st.w < 560,
+      contactCols: st.w >= 900 ? 'minmax(0,1fr) minmax(0,1.1fr)' : 'minmax(0,1fr)',
+      prodCols: st.w >= 960 ? 'minmax(0,1.05fr) minmax(0,1fr)' : 'minmax(0,1fr)',
+      focusSearch: () => {
+        if ((this.state.route || {}).page !== 'shop') location.hash = '#/shop';
+        setTimeout(() => {
+          window.scrollTo(0, 0);
+          const el = document.getElementById('sq-search-m');
+          if (el) el.focus();
+        }, 80);
+      },
       navFont: st.w < 1180 ? '12px' : '13px',
       mainPadB: mobile ? '64px' : '0px',
       cardMin: mobile ? 'min(100%, 158px)' : '232px',
       gridGap: mobile ? '10px' : '18px',
       homeCardMin: mobile ? 'min(100%, 158px)' : '260px',
-      catCols:
-        st.w >= 1180 ? 'repeat(6,minmax(0,1fr))' : st.w >= 700 ? 'repeat(3,minmax(0,1fr))' : 'repeat(2,minmax(0,1fr))',
+      heroCols: mobile ? 'minmax(0,1fr)' : 'minmax(0,1fr) minmax(0,1.1fr)',
+      brandCols: mobile ? 'minmax(0,1fr)' : 'minmax(0,1fr) minmax(0,1.3fr)',
+      serviceCols: st.w >= 700 ? 'repeat(3,minmax(0,1fr))' : 'minmax(0,1fr)',
+      heroTileGap: mobile ? '8px' : '14px',
+      heroArtMax: mobile ? '480px' : 'none',
+      heroTileFont: mobile ? '12px' : '14px',
+      ctaMin: mobile ? '0' : '180px',
+      secPad: mobile ? '32px 16px' : 'clamp(40px,4.5vw,64px) clamp(16px,3vw,32px)',
+      gridCols:
+        st.w >= 1100 ? 'repeat(4,minmax(0,1fr))' : st.w >= 700 ? 'repeat(3,minmax(0,1fr))' : 'repeat(2,minmax(0,1fr))',
+      shopGridCols:
+        st.w >= 1280 ? 'repeat(4,minmax(0,1fr))' : st.w >= 640 ? 'repeat(3,minmax(0,1fr))' : 'repeat(2,minmax(0,1fr))',
+      gridGapV: mobile ? '24px' : '36px',
+      wishHas: wishCount > 0,
+      cartHas: cartCount > 0,
+      heroGap: mobile ? '36px' : 'clamp(32px,5vw,72px)',
+      heroPad: mobile ? '28px 16px 36px' : 'clamp(40px,5vw,72px) clamp(16px,3vw,32px)',
+      heroFont: mobile ? '34px' : 'clamp(38px,3.6vw,52px)',
+      heroArtH: mobile ? '340px' : 'clamp(420px,40vw,560px)',
+      ctaFlex: mobile ? '1 1 100%' : '0 0 auto',
+      emptyArtMax: mobile ? '380px' : 'none',
+      ctaJustify: mobile ? 'flex-start' : 'flex-end',
+      angle: mobile ? '20px' : '36px',
+      catGap: mobile ? '14px 10px' : '20px',
+      catArrowDisplay: mobile ? 'none' : 'flex',
+      catAspect: mobile ? '1/1' : '4/3',
+      catPad: mobile ? '10px 10px 12px' : '14px 16px 16px',
+      catNameSize: mobile ? '13px' : '15px',
+      catNumSize: mobile ? '30px' : 'clamp(40px,4.4vw,64px)',
+      railFlow: mobile ? 'column' : 'row',
+      railAuto: mobile ? 'minmax(200px,66%)' : 'auto',
+      railCols: mobile ? 'none' : 'repeat(4,minmax(0,1fr))',
+      railOverflow: mobile ? 'auto' : 'visible',
+      railSnap: mobile ? 'x mandatory' : 'none',
+      railBleed: mobile ? '-16px' : '0',
+      railPadR: mobile ? '16px' : '0',
+      catCols: st.w >= 1000 ? 'repeat(6,minmax(0,1fr))' : 'repeat(3,minmax(0,1fr))',
       trustCols: st.w >= 1000 ? 'repeat(4,minmax(0,1fr))' : st.w >= 560 ? 'repeat(2,minmax(0,1fr))' : 'minmax(0,1fr)',
       lineTotalCol: mobile ? '2' : 'auto',
       lineTotalAlign: mobile ? 'left' : 'right',
-      splitCols: mobile ? 'minmax(0,1fr)' : 'minmax(0,1fr) minmax(320px,400px)',
-      summaryPos: mobile ? 'static' : 'sticky',
+      splitCols: st.w >= 960 ? 'minmax(0,1fr) minmax(320px,380px)' : 'minmax(0,1fr)',
+      summaryPos: st.w >= 960 ? 'sticky' : 'static',
       menuOpen: st.menuOpen,
       openMenu: () => this.setState({ menuOpen: true }),
       closeMenu: () => this.setState({ menuOpen: false }),
@@ -288,9 +400,16 @@ export default class StoreApp extends React.Component {
       bn: {
         home: pg === 'home' ? red : ink,
         shop: pg === 'shop' || pg === 'product' ? red : ink,
-        cats: st.menuOpen ? red : ink,
+        search: ink,
         wish: pg === 'wishlist' ? red : ink,
         acct: pg === 'account' ? red : ink,
+      },
+      bnBar: {
+        home: pg === 'home' ? red : 'transparent',
+        shop: pg === 'shop' || pg === 'product' ? red : 'transparent',
+        search: 'transparent',
+        wish: pg === 'wishlist' ? red : 'transparent',
+        acct: pg === 'account' ? red : 'transparent',
       },
       footShop: navItems.slice(1, 7),
       hasToast: !!st.toast,
@@ -301,39 +420,117 @@ export default class StoreApp extends React.Component {
     const all = S.products();
 
     if (pg === 'home') {
-      const heroPool = all.filter((p) => p.featured && p.available_quantity > 0);
-      const pick = (id, i) => {
-        const p = all.find((x) => x.product_id === id && x.available_quantity > 0) || heroPool[i] || all[i] || all[0];
-        if (!p) return { href: '#/shop', image: { kind: 'item', title: 'SIDE QUEST' }, name: 'Shop all', price: '' };
-        return {
-          href: '#/product/' + p.product_id,
-          image: SQView.imgVM(p),
-          name: p.name,
-          price: SQView.peso(S.effectivePrice(p)),
-        };
+      const withPhoto = (p) =>
+        !!(p.gallery && p.gallery[0] && p.gallery[0].url) || !!(p.images && p.images[0] && p.images[0].url);
+      const inStock = all.filter((p) => p.available_quantity > 0);
+      const byNew = inStock.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      const per = mobile ? 4 : 8,
+        per4 = mobile ? 4 : 4;
+      const chase = inStock
+        .filter((p) => this.isChase(p) || (p.product_type === 'GRADED_CARD' && p.featured))
+        .sort((a, b) => S.effectivePrice(b) - S.effectivePrice(a));
+      const ART = {
+        pokemon: 'singles',
+        psa: 'slab',
+        sealed: 'sealed',
+        accessories: 'accessories',
+        collectibles: 'collectibles',
+        other: 'hobby',
       };
+      const photoPick = (ps) => ps.find((p) => p.featured && withPhoto(p)) || ps.find(withPhoto);
+      const heroSrc = [
+        ['psa', 'Graded', 'slab', 'ink'],
+        ['pokemon', 'Singles', 'singles', 'red'],
+        ['sealed', 'Sealed', 'sealed', 'gold'],
+      ];
       Object.assign(v, {
-        hasHeroProducts: all.length > 0,
-        hero0: pick('SQ-PIKA-085', 0),
-        hero1: pick('SQ-CHAR-199', 1),
-        hero2: pick('SQ-PRE-ETB', 2),
-        homeCats: cats.map((c, i) => {
-          const ps = all.filter((p) => p.category === c.category_id),
-            rep = ps.find((p) => p.featured) || ps[0];
+        heroTiles: heroSrc.map(([cat, label, kind, tone], i) => {
+          const rep = photoPick(inStock.filter((p) => p.category === cat));
           return {
-            n: String(i + 1).padStart(2, '0'),
-            name: c.name,
-            desc: c.description,
-            countText: ps.length + (ps.length === 1 ? ' item' : ' items'),
-            href: '#/shop?cat=' + c.category_id,
-            image: rep ? SQView.imgVM(rep) : { kind: 'item', title: c.name },
+            href: '#/shop?cat=' + cat,
+            label,
+            kind,
+            tone,
+            hasPhoto: !!rep,
+            noPhoto: !rep,
+            image: rep ? SQView.imgVM(rep) : null,
+            offset: i === 1 ? '-28px' : '0',
           };
         }),
-        featured: all
-          .filter((p) => p.featured)
-          .sort((a, b) => (b.available_quantity > 0) - (a.available_quantity > 0))
-          .slice(0, 8)
+        hasNew: byNew.length > 0,
+        newItems: byNew.slice(0, per).map((p) => this.vm(p)),
+        homeCats: cats.map((c) => {
+          const ps = inStock.filter((p) => p.category === c.category_id),
+            rep = photoPick(ps);
+          return {
+            name:
+              {
+                pokemon: 'Pokémon',
+                psa: 'PSA / Graded Cards',
+                sealed: 'Sealed Products',
+                accessories: 'Accessories',
+                collectibles: 'Collectibles & Plush',
+                other: 'Other Hobbies',
+              }[c.category_id] ||
+              c.label ||
+              c.name,
+            href: '#/shop?cat=' + c.category_id,
+            hasCount: ps.length > 0,
+            countText: String(ps.length),
+            hasPhoto: !!rep,
+            noPhoto: !rep,
+            image: rep ? SQView.imgVM(rep) : null,
+            kind: ART[c.category_id] || 'hobby',
+          };
+        }),
+        hasChase: chase.length >= 2,
+        chaseItems: chase.slice(0, per4).map((p) => this.vm(p)),
+        hasSealed: inStock.some((p) => p.category === 'sealed'),
+        sealedItems: inStock
+          .filter((p) => p.category === 'sealed')
+          .slice(0, per4)
           .map((p) => this.vm(p)),
+        hasGraded: inStock.some((p) => p.product_type === 'GRADED_CARD'),
+        gradedItems: inStock
+          .filter((p) => p.product_type === 'GRADED_CARD')
+          .slice(0, per4)
+          .map((p) => this.vm(p)),
+        hasHobby: inStock.some((p) => HOBBY_CATS.includes(p.category)),
+        hobbyItems: inStock
+          .filter((p) => HOBBY_CATS.includes(p.category))
+          .slice(0, per4)
+          .map((p) => this.vm(p)),
+        services: [
+          [
+            'Nationwide shipping',
+            'We ship orders throughout the Philippines.',
+            '<path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"></path><path d="M15 18H9"></path><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14"></path><circle cx="17" cy="18" r="2"></circle><circle cx="7" cy="18" r="2"></circle>',
+          ],
+          [
+            'Packed with care',
+            'Cards are sleeved and packed for protection.',
+            '<path d="M16.5 9.4 7.55 4.24"></path><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><path d="M3.29 7 12 12l8.71-5"></path><path d="M12 22V12"></path>',
+          ],
+          [
+            'Buy, sell and trade',
+            'Looking for a card or want to trade? Get in touch.',
+            '<path d="m16 3 4 4-4 4"></path><path d="M20 7H4"></path><path d="m8 21-4-4 4-4"></path><path d="M4 17h16"></path>',
+          ],
+        ].map(([title, text, path]) => ({
+          title,
+          text,
+          icon: React.createElement('svg', {
+            width: 22,
+            height: 22,
+            viewBox: '0 0 24 24',
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: 1.8,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            dangerouslySetInnerHTML: { __html: path },
+          }),
+        })),
       });
     }
 
@@ -349,7 +546,11 @@ export default class StoreApp extends React.Component {
             .toLowerCase()
             .includes(q),
         );
-      let list = f.cat ? base.filter((p) => p.category === f.cat) : base;
+      let list = f.cat
+        ? base.filter((p) => p.category === f.cat)
+        : f.group === 'hobbies'
+          ? base.filter((p) => HOBBY_CATS.includes(p.category))
+          : base;
       const subs = [...new Set(list.map((p) => p.subcategory).filter(Boolean))];
       if (f.sub) list = list.filter((p) => p.subcategory === f.sub);
       if (f.min !== '') list = list.filter((p) => ep(p) >= Number(f.min));
@@ -385,25 +586,78 @@ export default class StoreApp extends React.Component {
           return { f: { ...s.f, [key]: a.includes(val) ? a.filter((x) => x !== val) : [...a, val] } };
         });
       const activeCount =
-        [f.cat, f.sub, f.min, f.max].filter(Boolean).length +
+        [f.cat, f.group, f.sub, f.min, f.max].filter(Boolean).length +
         f.cond.length +
         f.lang.length +
         f.grade.length +
         (f.inStock ? 1 : 0) +
         (f.sale ? 1 : 0);
       const catObj = S.category(f.cat);
+      const CAT_NAME = {
+        pokemon: 'Pokémon',
+        psa: 'PSA / Graded Cards',
+        sealed: 'Sealed Products',
+        accessories: 'Accessories',
+        collectibles: 'Collectibles & Plush',
+        other: 'Other Hobbies',
+      };
       const storeEmpty = all.length === 0;
-      v.noResultsTitle = storeEmpty ? 'New stock coming soon' : 'No products match';
-      v.hasActiveFilters = !storeEmpty;
-      v.noResultsText = storeEmpty
-        ? 'We’re photographing and listing our first cards now. Check back soon.'
-        : f.cat && !all.some((p) => p.category === f.cat)
-          ? 'Nothing in this category right now. Check back soon, or browse everything.'
-          : q
-            ? 'Nothing matched your search. Try a set name, Pokémon or card number.'
-            : 'Try removing a filter or two.';
+      const catEmpty =
+        !storeEmpty &&
+        (f.cat
+          ? !all.some((p) => p.category === f.cat)
+          : f.group === 'hobbies'
+            ? !all.some((p) => HOBBY_CATS.includes(p.category))
+            : false);
+      const refine = activeCount - (f.cat ? 1 : 0) - (f.group ? 1 : 0);
+      const scoped = !!(f.cat || f.group);
+      if (storeEmpty || catEmpty) {
+        v.noResultsTitle = 'Nothing here yet';
+        v.noResultsText = 'We’re getting the next quests ready.';
+      } else if (q && !refine) {
+        v.noResultsTitle = 'No results for “' + st.q.trim() + '”';
+        v.noResultsText = 'Try a set name, Pokémon or card number.';
+      } else {
+        v.noResultsTitle = 'No products match your filters.';
+        v.noResultsText = '';
+      }
+      v.hasNoResultsText = !!v.noResultsText;
+      v.hasActiveFilters = refine > 0 && !storeEmpty && !catEmpty;
+      v.showEmptyLink = scoped || !!q || storeEmpty;
+      v.emptyLinkHref = scoped || q ? '#/shop' : '#/';
+      v.emptyLinkText = scoped || q ? 'Browse all products →' : 'Back to home →';
+      v.shopKicker = q ? 'SEARCH' : 'SHOP';
+      v.shopIntro = q
+        ? ''
+        : f.cat
+          ? (catObj && catObj.description) || ''
+          : f.group === 'hobbies'
+            ? 'Accessories, collectibles, plush and other hobby finds.'
+            : 'Cards, sealed products, collectibles and hobby finds.';
+      v.hasShopIntro = !!v.shopIntro;
+      v.catTabs = ['', ...cats.map((c) => c.category_id)].map((id) => {
+        const on = id ? f.cat === id : !f.cat && !f.group;
+        return {
+          label: id ? CAT_NAME[id] || (S.category(id) || {}).label || id : 'All',
+          count: id ? base.filter((p) => p.category === id).length : base.length,
+          on,
+          fg: on ? 'var(--color-text)' : 'var(--color-neutral-800)',
+          fw: on ? 600 : 400,
+          bar: on ? 'var(--color-accent)' : 'transparent',
+          dot: on ? 'var(--sq-gold)' : 'transparent',
+          onClick: () => this.setF({ cat: id, group: '', sub: '' }),
+        };
+      });
       Object.assign(v, {
-        shopTitle: f.sale ? 'Sale' : catObj ? catObj.name : q ? `Results for “${st.q.trim()}”` : 'Shop all',
+        shopTitle: f.sale
+          ? 'Sale'
+          : catObj
+            ? CAT_NAME[f.cat] || catObj.label || catObj.name
+            : f.group === 'hobbies'
+              ? 'Hobbies'
+              : q
+                ? `Results for “${st.q.trim()}”`
+                : 'Shop',
         results: list.map((p) => this.vm(p)),
         hasResults: list.length > 0,
         noResults: list.length === 0,
@@ -443,29 +697,48 @@ export default class StoreApp extends React.Component {
         onMin: (e) => this.setF({ min: e.target.value }),
         onMax: (e) => this.setF({ max: e.target.value }),
         filterGroups: [
+          // Only offer values that exist in the current catalog (no empty/fabricated filters)
           {
             title: 'Condition',
-            opts: ['NM', 'LP', 'MP', 'HP', 'DMG', 'New', 'Sealed'].map((c) =>
-              chip(c, f.cond.includes(c), tog('cond', c)),
-            ),
+            opts: ['NM', 'LP', 'MP', 'HP', 'DMG', 'New', 'Sealed']
+              .filter((c) => f.cond.includes(c) || base.some((p) => p.condition === c))
+              .map((c) => chip(c, f.cond.includes(c), tog('cond', c))),
           },
-          { title: 'Language', opts: ['English', 'Japanese'].map((c) => chip(c, f.lang.includes(c), tog('lang', c))) },
+          {
+            title: 'Language',
+            opts: [...new Set(base.map((p) => p.language).filter(Boolean))]
+              .sort()
+              .map((c) => chip(c, f.lang.includes(c), tog('lang', c))),
+          },
           {
             title: 'Grading',
-            opts: ['Raw', 'PSA', 'BGS', 'CGC'].map((c) => chip(c, f.grade.includes(c), tog('grade', c))),
+            opts: ['Raw', 'PSA', 'BGS', 'CGC', 'Other']
+              .filter((c) => f.grade.includes(c) || base.some((p) => gradeOf(p) === c))
+              .map((c) => chip(c, f.grade.includes(c), tog('grade', c))),
           },
           {
-            title: 'Availability & sale',
+            title: 'Availability',
             opts: [
               chip('In stock only', f.inStock, () => this.setF({ inStock: !f.inStock })),
-              chip('On sale', f.sale, () => this.setF({ sale: !f.sale })),
+              ...(f.sale || base.some((p) => S.isOnSale(p))
+                ? [chip('On sale', f.sale, () => this.setF({ sale: !f.sale }))]
+                : []),
             ],
           },
-        ],
+        ].filter((g) => g.opts.length),
         clearFilters: () => this.setState({ f: { ...this.emptyF(), sort: this.state.f.sort }, q: '' }),
         openFilters: () => this.setState({ filtersOpen: true }),
         closeFilters: () => this.setState({ filtersOpen: false }),
-        shopCols: mobile ? 'minmax(0,1fr)' : '250px minmax(0,1fr)',
+        shopCols: mobile ? 'minmax(0,1fr)' : '220px minmax(0,1fr)',
+        sortMin: mobile ? '0' : '170px',
+        introPad: mobile ? '4px 0 16px' : '8px 0 22px',
+        tabGap: mobile ? '22px' : '28px',
+        tabBleed: mobile ? '-16px' : '0',
+        tabBleedPad: mobile ? '16px' : '0',
+        emptyPad: mobile ? '24px 0 40px' : '40px 0 64px',
+        pricePad: f.cat && subs.length > 1 ? '16px 0 8px' : '4px 0 8px',
+        priceMt: f.cat && subs.length > 1 ? '12px' : '0',
+        priceBt: f.cat && subs.length > 1 ? '1px solid var(--color-divider)' : '0',
         asideDisplay: mobile ? (st.filtersOpen ? 'block' : 'none') : 'block',
         asidePos: mobile ? 'fixed' : 'sticky',
         asideTop: mobile ? '0px' : '150px',
@@ -494,14 +767,14 @@ export default class StoreApp extends React.Component {
         if (p.condition) chips.push(SQView.COND[p.condition] || p.condition);
         if (['SINGLE', 'GRADED_CARD', 'SEALED'].includes(p.product_type)) chips.push(p.language);
         const details = [
-          ['SKU', p.sku],
-          ['Pokémon', p.pokemon],
+          ['Grade', p.grading_company ? `${p.grading_company} ${p.grade}` : ''],
+          ['Condition', SQView.COND[p.condition] || p.condition],
+          ['Language', p.language],
           ['Set', p.set],
           ['Card number', p.card_number],
-          ['Language', p.language],
-          ['Condition', SQView.COND[p.condition] || p.condition],
-          ['Grading', p.grading_company ? `${p.grading_company} ${p.grade}` : ''],
+          ['Pokémon', p.pokemon],
           ['Product type', SQView.TYPES[p.product_type]],
+          ['SKU', p.sku],
           ['Inventory ID', p.track_items && av === 1 && inv ? inv.inventory_item_id : ''],
         ]
           .filter((x) => x[1])
@@ -510,13 +783,24 @@ export default class StoreApp extends React.Component {
         Object.assign(v, {
           hasP: true,
           pNotFound: false,
-          galleryPos: mobile ? 'static' : 'sticky',
+          galleryPos: st.w >= 960 ? 'sticky' : 'static',
           pd: {
             ...base,
             catHref: '#/shop?cat=' + p.category,
             kicker: [base.catLabel, p.subcategory].filter(Boolean).join(' · '),
             chips,
-            saveText: `SAVE ${SQView.peso(p.price - (p.sale_price || p.price))}`,
+            saveText: `Save ${SQView.peso(p.price - (p.sale_price || p.price))}`,
+            hasBadge: !!(base.soldOut || base.hasSale || base.isNew),
+            badge: base.soldOut ? 'Sold out' : base.hasSale ? base.saleText : base.isNew ? 'New' : '',
+            badgeBg: base.soldOut
+              ? 'var(--color-neutral-700)'
+              : base.hasSale
+                ? 'var(--color-accent)'
+                : 'var(--color-text)',
+            badgeFg: 'var(--color-bg)',
+            hasSub: !!base.subline,
+            hasThumbs: imgs.length > 1,
+            isUnique: !!(unique && av > 0),
             mainImage: SQView.imgVM(gp, idx),
             thumbs: imgs.map((im, i) => ({
               image: SQView.imgVM(gp, i),
@@ -524,14 +808,7 @@ export default class StoreApp extends React.Component {
               bd: i === idx ? ink : 'var(--color-divider)',
               onClick: () => this.setState({ img: i }),
             })),
-            availNote:
-              av <= 0
-                ? ''
-                : unique
-                  ? '· One physical item. This exact card ships to you.'
-                  : inCart
-                    ? `· ${inCart} in your cart`
-                    : '',
+            availNote: av <= 0 ? '' : unique ? '' : inCart ? `· ${inCart} in your cart` : '',
             canBuy: maxAdd > 0,
             cantBuy: maxAdd <= 0,
             cantBuyText:
@@ -629,8 +906,8 @@ export default class StoreApp extends React.Component {
         });
         v.coSections = [
           {
-            n: '01',
-            title: 'Contact',
+            n: '',
+            title: 'Contact details',
             fields: [
               fld('name', 'Full name', { full: true, auto: 'name' }),
               fld('email', 'Email', { type: 'email', im: 'email', auto: 'email', ph: 'you@email.com' }),
@@ -638,7 +915,7 @@ export default class StoreApp extends React.Component {
             ],
           },
           {
-            n: '02',
+            n: '',
             title: 'Shipping address',
             fields: [
               fld('address', 'House no., street, barangay', { full: true, auto: 'street-address' }),
@@ -648,7 +925,7 @@ export default class StoreApp extends React.Component {
             ],
           },
           {
-            n: '03',
+            n: '',
             title: 'Order notes',
             fields: [fld('notes', 'Anything we should know? (optional)', { full: true, area: true })],
           },
@@ -669,26 +946,32 @@ export default class StoreApp extends React.Component {
             label: 'Card / online payment',
             desc: 'Pay online with card or e-wallet through a payment gateway.',
             disabled: true,
-            tag: 'COMING SOON',
+            tag: 'Not yet available',
           },
-        ].map((m) => {
-          const on = co.payment === m.id;
-          return {
-            ...m,
-            on,
-            disabled: !!m.disabled,
-            hasTag: !!m.tag,
-            bd: on ? '2px solid var(--color-text)' : '1px solid var(--color-divider)',
-            bg: on ? 'var(--color-surface)' : 'transparent',
-            cursor: m.disabled ? 'not-allowed' : 'pointer',
-            op: m.disabled ? 0.55 : 1,
-            onPick: () => !m.disabled && this.setState((s) => ({ co: { ...s.co, payment: m.id } })),
-          };
-        });
+          // Only methods listed in the store's enabled_payment_methods setting are shown to customers.
+          // To launch the gateway: add 'ONLINE_GATEWAY' to that setting and remove `disabled` above.
+        ]
+          .filter((m) =>
+            ((S.SETTINGS && S.SETTINGS.enabled_payment_methods) || ['GCASH', 'BANK_TRANSFER']).includes(m.id),
+          )
+          .map((m) => {
+            const on = co.payment === m.id;
+            return {
+              ...m,
+              on,
+              disabled: !!m.disabled,
+              hasTag: !!m.tag,
+              bd: on ? '1px solid var(--color-text)' : '1px solid var(--color-divider)',
+              bg: on ? 'var(--color-surface)' : 'transparent',
+              cursor: m.disabled ? 'not-allowed' : 'pointer',
+              op: m.disabled ? 0.55 : 1,
+              onPick: () => !m.disabled && this.setState((s) => ({ co: { ...s.co, payment: m.id } })),
+            };
+          });
         v.hasCoErr = !!st.coErr;
         v.coErr = st.coErr;
         v.placing = !!st.placing;
-        v.placeLabel = st.placing ? 'PLACING ORDER…' : 'PLACE ORDER';
+        v.placeLabel = st.placing ? 'Placing order…' : 'Place order';
         v.placeOrder = () => {
           const c = this.state.co,
             errs = [];
@@ -893,40 +1176,40 @@ export default class StoreApp extends React.Component {
 
         {v.isStore ? (
           <>
-            <div
-              style={{
-                background: 'var(--color-text)',
-                color: 'var(--color-bg)',
-                fontSize: '12px',
-                letterSpacing: '.08em',
-              }}
-            >
+            <div style={{ background: 'var(--color-surface)', borderBottom: '1px solid var(--color-divider)' }}>
               {' '}
               <div
                 style={{
-                  maxWidth: '1320px',
+                  maxWidth: '1280px',
                   margin: '0 auto',
-                  padding: '8px clamp(16px,4vw,40px)',
+                  padding: '0 clamp(16px,3vw,32px)',
+                  minHeight: '32px',
                   display: 'flex',
-                  gap: '24px',
-                  justifyContent: 'space-between',
                   alignItems: 'center',
-                  flexWrap: 'wrap',
+                  justifyContent: v.stripJustify,
+                  gap: '16px',
+                  fontSize: '12px',
+                  color: 'var(--color-neutral-800)',
                 }}
               >
                 {' '}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: '800' }}>
-                  <span style={{ display: 'flex', gap: '3px' }}>
-                    <span style={{ width: '14px', height: '3px', background: 'var(--sq-gold)' }}></span>
-                    <span style={{ width: '14px', height: '3px', background: 'var(--color-accent)' }}></span>
-                  </span>
-                  {'COLLECT • TRADE • HOBBIES'}
-                </div>{' '}
                 {v.isDesktop ? (
                   <>
-                    <span style={{ opacity: '.85' }}>{'Nationwide shipping across the Philippines'}</span>
+                    <span
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        fontWeight: '600',
+                        letterSpacing: '.12em',
+                      }}
+                    >
+                      <span style={{ width: '6px', height: '6px', background: 'var(--sq-gold)' }}></span>
+                      {'COLLECT • TRADE • HOBBIES'}
+                    </span>
                   </>
                 ) : null}{' '}
+                <span>{'Nationwide shipping across the Philippines'}</span>{' '}
               </div>
             </div>
 
@@ -936,7 +1219,7 @@ export default class StoreApp extends React.Component {
                 top: '0',
                 zIndex: '30',
                 background: 'var(--color-bg)',
-                borderBottom: '2px solid var(--color-text)',
+                borderBottom: '1px solid var(--color-divider)',
               }}
             >
               {' '}
@@ -945,12 +1228,12 @@ export default class StoreApp extends React.Component {
                   {' '}
                   <div
                     style={{
-                      maxWidth: '1320px',
+                      maxWidth: '1280px',
                       margin: '0 auto',
-                      padding: '12px clamp(16px,4vw,40px)',
+                      padding: '10px clamp(16px,3vw,32px)',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: 'clamp(20px,3vw,40px)',
+                      gap: '28px',
                     }}
                   >
                     {' '}
@@ -958,127 +1241,135 @@ export default class StoreApp extends React.Component {
                       <img
                         src={'/assets/sidequest-logo.png'}
                         alt={'SIDE QUEST — Collect • Trade • Hobbies'}
-                        style={{ height: '64px', width: 'auto', display: 'block' }}
+                        style={{ height: '52px', width: 'auto', display: 'block' }}
                       />
                     </a>{' '}
-                    <div
-                      style={{
-                        flex: '1',
-                        maxWidth: '640px',
-                        display: 'flex',
-                        border: '2px solid var(--color-text)',
-                        background: 'var(--color-bg)',
-                      }}
-                    >
+                    <nav aria-label={'Shop'} style={{ display: 'flex', gap: v.navGap }}>
                       {' '}
-                      <input
-                        value={v.q}
-                        onChange={v.onQ}
-                        onKeyDown={v.onQKey}
-                        placeholder={'Search cards, sets, sealed products…'}
-                        aria-label={'Search'}
+                      {L(v.navItems).map((n, $index) => (
+                        <React.Fragment key={$index}>
+                          {' '}
+                          <a
+                            href={n?.href}
+                            className="sq5p0"
+                            style={{
+                              padding: '8px 0',
+                              fontSize: '13px',
+                              fontWeight: '600',
+                              letterSpacing: '.06em',
+                              textTransform: 'uppercase',
+                              color: n?.color,
+                              textDecoration: 'none',
+                              borderBottom: `2px solid ${S(n?.bar)}`,
+                            }}
+                          >
+                            {T(n?.label)}
+                          </a>{' '}
+                        </React.Fragment>
+                      ))}{' '}
+                    </nav>{' '}
+                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      {' '}
+                      {v.wideHeader ? (
+                        <>
+                          <div
+                            style={{
+                              width: 'clamp(200px,22vw,300px)',
+                              height: '40px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              background: 'var(--color-surface)',
+                            }}
+                          >
+                            {' '}
+                            <span
+                              style={{ display: 'flex', padding: '0 6px 0 12px', color: 'var(--color-neutral-700)' }}
+                            >
+                              <svg
+                                width={'17'}
+                                height={'17'}
+                                viewBox={'0 0 24 24'}
+                                fill={'none'}
+                                stroke={'currentColor'}
+                                strokeWidth={'2'}
+                                strokeLinecap={'round'}
+                                strokeLinejoin={'round'}
+                              >
+                                <circle cx={'11'} cy={'11'} r={'8'}></circle>
+                                <path d={'m21 21-4.3-4.3'}></path>
+                              </svg>
+                            </span>{' '}
+                            <input
+                              value={v.q}
+                              onChange={v.onQ}
+                              onKeyDown={v.onQKey}
+                              placeholder={'Search cards, sets, sealed…'}
+                              aria-label={'Search the store'}
+                              style={{
+                                flex: '1',
+                                minWidth: '0',
+                                height: '100%',
+                                border: '0',
+                                background: 'transparent',
+                                padding: '0 12px 0 4px',
+                                font: 'inherit',
+                                fontSize: '14px',
+                                color: 'var(--color-text)',
+                                outline: 'none',
+                              }}
+                            />{' '}
+                          </div>
+                        </>
+                      ) : null}{' '}
+                      <a
+                        href={'#/account'}
+                        aria-label={'Account'}
+                        className="sq5p0"
                         style={{
-                          flex: '1',
-                          minWidth: '0',
-                          border: '0',
-                          background: 'transparent',
-                          padding: '11px 14px',
-                          font: 'inherit',
-                          fontSize: '15px',
-                          color: 'var(--color-text)',
-                          outline: 'none',
-                        }}
-                      />{' '}
-                      <button
-                        onClick={v.doSearch}
-                        aria-label={'Search'}
-                        className="sqp0"
-                        style={{
-                          border: '0',
-                          background: 'var(--color-text)',
-                          color: 'var(--color-bg)',
-                          width: '48px',
+                          position: 'relative',
+                          width: '42px',
+                          height: '42px',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {' '}
-                        <svg
-                          width={'18'}
-                          height={'18'}
-                          viewBox={'0 0 24 24'}
-                          fill={'none'}
-                          stroke={'currentColor'}
-                          strokeWidth={'2.5'}
-                          strokeLinecap={'round'}
-                          strokeLinejoin={'round'}
-                        >
-                          <circle cx={'11'} cy={'11'} r={'8'}></circle>
-                          <path d={'m21 21-4.3-4.3'}></path>
-                        </svg>{' '}
-                      </button>{' '}
-                    </div>{' '}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginLeft: 'auto' }}>
-                      {' '}
-                      <a
-                        href={'#/account'}
-                        className="sqp1"
-                        style={{
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: 'center',
-                          gap: '2px',
-                          padding: '6px 10px',
                           color: 'var(--color-text)',
-                          textDecoration: 'none',
-                          fontSize: '11px',
-                          fontWeight: '600',
-                          letterSpacing: '.06em',
                         }}
                       >
-                        {' '}
                         <svg
                           width={'22'}
                           height={'22'}
                           viewBox={'0 0 24 24'}
                           fill={'none'}
                           stroke={'currentColor'}
-                          strokeWidth={'2'}
+                          strokeWidth={'1.8'}
                           strokeLinecap={'round'}
                           strokeLinejoin={'round'}
                         >
                           <path d={'M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2'}></path>
                           <circle cx={'12'} cy={'7'} r={'4'}></circle>
                         </svg>
-                        {'ACCOUNT'}
                       </a>{' '}
                       <a
                         href={'#/wishlist'}
-                        className="sqp1"
+                        aria-label={'Wishlist'}
+                        className="sq5p0"
                         style={{
                           position: 'relative',
+                          width: '42px',
+                          height: '42px',
                           display: 'flex',
-                          flexDirection: 'column',
                           alignItems: 'center',
-                          gap: '2px',
-                          padding: '6px 10px',
+                          justifyContent: 'center',
                           color: 'var(--color-text)',
-                          textDecoration: 'none',
-                          fontSize: '11px',
-                          fontWeight: '600',
-                          letterSpacing: '.06em',
                         }}
                       >
-                        {' '}
                         <svg
                           width={'22'}
                           height={'22'}
                           viewBox={'0 0 24 24'}
                           fill={'none'}
                           stroke={'currentColor'}
-                          strokeWidth={'2'}
+                          strokeWidth={'1.8'}
                           strokeLinecap={'round'}
                           strokeLinejoin={'round'}
                         >
@@ -1088,21 +1379,20 @@ export default class StoreApp extends React.Component {
                             }
                           ></path>
                         </svg>
-                        {'WISHLIST '}
-                        {v.hasWish ? (
+                        {v.wishHas ? (
                           <>
                             <span
                               style={{
                                 position: 'absolute',
-                                top: '0',
-                                right: '8px',
-                                minWidth: '18px',
-                                height: '18px',
+                                top: '2px',
+                                right: '0',
+                                minWidth: '17px',
+                                height: '17px',
                                 padding: '0 4px',
                                 background: 'var(--color-text)',
                                 color: 'var(--color-bg)',
-                                fontSize: '11px',
-                                fontWeight: '800',
+                                fontSize: '10px',
+                                fontWeight: '700',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
@@ -1111,33 +1401,29 @@ export default class StoreApp extends React.Component {
                               {T(v.wishCount)}
                             </span>
                           </>
-                        ) : null}{' '}
+                        ) : null}
                       </a>{' '}
                       <a
                         href={'#/cart'}
-                        className="sqp1"
+                        aria-label={'Cart'}
+                        className="sq5p0"
                         style={{
                           position: 'relative',
+                          width: '42px',
+                          height: '42px',
                           display: 'flex',
-                          flexDirection: 'column',
                           alignItems: 'center',
-                          gap: '2px',
-                          padding: '6px 10px',
+                          justifyContent: 'center',
                           color: 'var(--color-text)',
-                          textDecoration: 'none',
-                          fontSize: '11px',
-                          fontWeight: '600',
-                          letterSpacing: '.06em',
                         }}
                       >
-                        {' '}
                         <svg
                           width={'22'}
                           height={'22'}
                           viewBox={'0 0 24 24'}
                           fill={'none'}
                           stroke={'currentColor'}
-                          strokeWidth={'2'}
+                          strokeWidth={'1.8'}
                           strokeLinecap={'round'}
                           strokeLinejoin={'round'}
                         >
@@ -1145,21 +1431,20 @@ export default class StoreApp extends React.Component {
                           <path d={'M3 6h18'}></path>
                           <path d={'M16 10a4 4 0 0 1-8 0'}></path>
                         </svg>
-                        {'CART '}
-                        {v.hasCart ? (
+                        {v.cartHas ? (
                           <>
                             <span
                               style={{
                                 position: 'absolute',
-                                top: '0',
-                                right: '4px',
-                                minWidth: '18px',
-                                height: '18px',
+                                top: '2px',
+                                right: '0',
+                                minWidth: '17px',
+                                height: '17px',
                                 padding: '0 4px',
                                 background: 'var(--color-accent)',
                                 color: 'var(--color-bg)',
-                                fontSize: '11px',
-                                fontWeight: '800',
+                                fontSize: '10px',
+                                fontWeight: '700',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
@@ -1168,52 +1453,69 @@ export default class StoreApp extends React.Component {
                               {T(v.cartCount)}
                             </span>
                           </>
-                        ) : null}{' '}
+                        ) : null}
                       </a>{' '}
                     </div>{' '}
                   </div>{' '}
-                  <nav style={{ borderTop: '1px solid var(--color-divider)' }}>
-                    {' '}
-                    <div
-                      style={{
-                        maxWidth: '1320px',
-                        margin: '0 auto',
-                        padding: '0 clamp(16px,4vw,40px)',
-                        display: 'flex',
-                        flexWrap: 'wrap',
-                        columnGap: v.navGap,
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
+                  {v.tabletSearch ? (
+                    <>
                       {' '}
-                      {L(v.navItems).map((n, $index) => (
-                        <React.Fragment key={$index}>
+                      <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 clamp(16px,3vw,32px) 12px' }}>
+                        {' '}
+                        <div
+                          style={{
+                            height: '44px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            background: 'var(--color-surface)',
+                          }}
+                        >
                           {' '}
-                          <a
-                            href={n?.href}
-                            className="sqp1"
+                          <span style={{ display: 'flex', padding: '0 4px 0 12px', color: 'var(--color-neutral-700)' }}>
+                            <svg
+                              width={'17'}
+                              height={'17'}
+                              viewBox={'0 0 24 24'}
+                              fill={'none'}
+                              stroke={'currentColor'}
+                              strokeWidth={'2'}
+                              strokeLinecap={'round'}
+                              strokeLinejoin={'round'}
+                            >
+                              <circle cx={'11'} cy={'11'} r={'8'}></circle>
+                              <path d={'m21 21-4.3-4.3'}></path>
+                            </svg>
+                          </span>{' '}
+                          <input
+                            value={v.q}
+                            onChange={v.onQ}
+                            onKeyDown={v.onQKey}
+                            placeholder={'Search cards, sets, sealed…'}
+                            aria-label={'Search the store'}
+                            enterKeyHint={'search'}
                             style={{
-                              padding: '13px 0 10px',
-                              fontSize: v.navFont,
-                              fontWeight: '800',
-                              letterSpacing: '.07em',
-                              color: n?.color,
-                              textDecoration: 'none',
-                              borderBottom: `3px solid ${S(n?.bar)}`,
+                              flex: '1',
+                              minWidth: '0',
+                              height: '100%',
+                              border: '0',
+                              background: 'transparent',
+                              padding: '0 12px 0 6px',
+                              font: 'inherit',
+                              fontSize: '16px',
+                              color: 'var(--color-text)',
+                              outline: 'none',
                             }}
-                          >
-                            {T(n?.label)}
-                          </a>{' '}
-                        </React.Fragment>
-                      ))}{' '}
-                    </div>{' '}
-                  </nav>{' '}
+                          />{' '}
+                        </div>{' '}
+                      </div>{' '}
+                    </>
+                  ) : null}{' '}
                 </>
               ) : null}{' '}
               {v.isMobile ? (
                 <>
                   {' '}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '2px', padding: '6px 8px' }}>
                     {' '}
                     <button
                       onClick={v.openMenu}
@@ -1230,24 +1532,24 @@ export default class StoreApp extends React.Component {
                         cursor: 'pointer',
                       }}
                     >
-                      {' '}
                       <svg
-                        width={'24'}
-                        height={'24'}
+                        width={'22'}
+                        height={'22'}
                         viewBox={'0 0 24 24'}
                         fill={'none'}
                         stroke={'currentColor'}
-                        strokeWidth={'2.2'}
+                        strokeWidth={'2'}
                         strokeLinecap={'round'}
+                        strokeLinejoin={'round'}
                       >
-                        <path d={'M4 6h16M4 12h16M4 18h16'}></path>
-                      </svg>{' '}
+                        <path d={'M4 7h16M4 12h16M4 17h16'}></path>
+                      </svg>
                     </button>{' '}
-                    <a href={'#/'} aria-label={'SIDE QUEST home'} style={{ display: 'block' }}>
+                    <a href={'#/'} aria-label={'SIDE QUEST home'} style={{ display: 'block', marginRight: 'auto' }}>
                       <img
                         src={'/assets/sidequest-logo.png'}
                         alt={'SIDE QUEST'}
-                        style={{ height: '46px', width: 'auto', display: 'block' }}
+                        style={{ height: '40px', width: 'auto', display: 'block' }}
                       />
                     </a>{' '}
                     <a
@@ -1255,7 +1557,6 @@ export default class StoreApp extends React.Component {
                       aria-label={'Cart'}
                       style={{
                         position: 'relative',
-                        marginLeft: 'auto',
                         width: '44px',
                         height: '44px',
                         display: 'flex',
@@ -1264,35 +1565,34 @@ export default class StoreApp extends React.Component {
                         color: 'var(--color-text)',
                       }}
                     >
-                      {' '}
                       <svg
-                        width={'24'}
-                        height={'24'}
+                        width={'22'}
+                        height={'22'}
                         viewBox={'0 0 24 24'}
                         fill={'none'}
                         stroke={'currentColor'}
-                        strokeWidth={'2'}
+                        strokeWidth={'1.8'}
                         strokeLinecap={'round'}
                         strokeLinejoin={'round'}
                       >
                         <path d={'M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z'}></path>
                         <path d={'M3 6h18'}></path>
                         <path d={'M16 10a4 4 0 0 1-8 0'}></path>
-                      </svg>{' '}
-                      {v.hasCart ? (
+                      </svg>
+                      {v.cartHas ? (
                         <>
                           <span
                             style={{
                               position: 'absolute',
-                              top: '4px',
-                              right: '2px',
-                              minWidth: '18px',
-                              height: '18px',
+                              top: '2px',
+                              right: '0',
+                              minWidth: '17px',
+                              height: '17px',
                               padding: '0 4px',
                               background: 'var(--color-accent)',
                               color: 'var(--color-bg)',
-                              fontSize: '11px',
-                              fontWeight: '800',
+                              fontSize: '10px',
+                              fontWeight: '700',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
@@ -1301,58 +1601,57 @@ export default class StoreApp extends React.Component {
                             {T(v.cartCount)}
                           </span>
                         </>
-                      ) : null}{' '}
+                      ) : null}
                     </a>{' '}
                   </div>{' '}
-                  <div style={{ display: 'flex', borderTop: '1px solid var(--color-divider)' }}>
+                  <div style={{ padding: '0 12px 10px' }}>
                     {' '}
-                    <input
-                      value={v.q}
-                      onChange={v.onQ}
-                      onKeyDown={v.onQKey}
-                      placeholder={'Search cards, sets, sealed…'}
-                      aria-label={'Search'}
+                    <div
                       style={{
-                        flex: '1',
-                        minWidth: '0',
-                        border: '0',
-                        background: 'transparent',
-                        padding: '12px 16px',
-                        font: 'inherit',
-                        fontSize: '16px',
-                        color: 'var(--color-text)',
-                        outline: 'none',
-                      }}
-                    />{' '}
-                    <button
-                      onClick={v.doSearch}
-                      aria-label={'Search'}
-                      style={{
-                        border: '0',
-                        borderLeft: '1px solid var(--color-divider)',
-                        background: 'transparent',
-                        width: '52px',
+                        height: '44px',
                         display: 'flex',
                         alignItems: 'center',
-                        justifyContent: 'center',
-                        color: 'var(--color-text)',
+                        background: 'var(--color-surface)',
                       }}
                     >
                       {' '}
-                      <svg
-                        width={'20'}
-                        height={'20'}
-                        viewBox={'0 0 24 24'}
-                        fill={'none'}
-                        stroke={'currentColor'}
-                        strokeWidth={'2.5'}
-                        strokeLinecap={'round'}
-                        strokeLinejoin={'round'}
-                      >
-                        <circle cx={'11'} cy={'11'} r={'8'}></circle>
-                        <path d={'m21 21-4.3-4.3'}></path>
-                      </svg>{' '}
-                    </button>{' '}
+                      <span style={{ display: 'flex', padding: '0 4px 0 12px', color: 'var(--color-neutral-700)' }}>
+                        <svg
+                          width={'17'}
+                          height={'17'}
+                          viewBox={'0 0 24 24'}
+                          fill={'none'}
+                          stroke={'currentColor'}
+                          strokeWidth={'2'}
+                          strokeLinecap={'round'}
+                          strokeLinejoin={'round'}
+                        >
+                          <circle cx={'11'} cy={'11'} r={'8'}></circle>
+                          <path d={'m21 21-4.3-4.3'}></path>
+                        </svg>
+                      </span>{' '}
+                      <input
+                        value={v.q}
+                        onChange={v.onQ}
+                        onKeyDown={v.onQKey}
+                        placeholder={'Search cards, sets, sealed…'}
+                        aria-label={'Search the store'}
+                        enterKeyHint={'search'}
+                        id={'sq-search-m'}
+                        style={{
+                          flex: '1',
+                          minWidth: '0',
+                          height: '100%',
+                          border: '0',
+                          background: 'transparent',
+                          padding: '0 12px 0 6px',
+                          font: 'inherit',
+                          fontSize: '16px',
+                          color: 'var(--color-text)',
+                          outline: 'none',
+                        }}
+                      />{' '}
+                    </div>{' '}
                   </div>{' '}
                 </>
               ) : null}
@@ -1362,589 +1661,667 @@ export default class StoreApp extends React.Component {
               {v.isHome ? (
                 <>
                   {' '}
-                  <section
-                    data-screen-label={'Home'}
-                    style={{ background: 'var(--color-text)', color: 'var(--color-bg)' }}
-                  >
+                  <section data-screen-label={'Home'} style={{ borderBottom: '1px solid var(--color-divider)' }}>
                     {' '}
                     <div
                       style={{
-                        maxWidth: '1320px',
+                        maxWidth: '1280px',
                         margin: '0 auto',
-                        padding: 'clamp(40px,7vw,96px) clamp(16px,4vw,40px)',
+                        padding: v.heroPad,
                         display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,420px),1fr))',
-                        gap: 'clamp(32px,5vw,64px)',
+                        gridTemplateColumns: v.heroCols,
+                        gap: v.heroGap,
                         alignItems: 'center',
                       }}
                     >
                       {' '}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', alignItems: 'flex-start' }}>
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '16px',
+                          alignItems: 'flex-start',
+                          minWidth: '0',
+                        }}
+                      >
                         {' '}
+                        <h1
+                          style={{
+                            fontSize: v.heroFont,
+                            lineHeight: '1.05',
+                            letterSpacing: '-.02em',
+                            fontWeight: '700',
+                            margin: '0',
+                            color: 'var(--color-text)',
+                          }}
+                        >
+                          {'Find your next chase'}
+                        </h1>{' '}
+                        <p
+                          style={{
+                            maxWidth: '440px',
+                            margin: '0',
+                            fontSize: '17px',
+                            lineHeight: '1.55',
+                            color: 'var(--color-neutral-800)',
+                            textWrap: 'pretty',
+                          }}
+                        >
+                          {
+                            'Pokémon TCG singles, graded cards and sealed product, plus collectibles and hobby finds. Shipped nationwide across the Philippines.'
+                          }
+                        </p>{' '}
                         <div
                           style={{
                             display: 'flex',
                             alignItems: 'center',
-                            gap: '12px',
-                            fontSize: '12px',
-                            fontWeight: '800',
-                            letterSpacing: '.16em',
-                            color: 'var(--sq-gold)',
+                            gap: '20px',
+                            flexWrap: 'wrap',
+                            marginTop: '8px',
                           }}
                         >
-                          <span style={{ display: 'flex', gap: '3px' }}>
-                            <span style={{ width: '22px', height: '4px', background: 'var(--sq-gold)' }}></span>
-                            <span style={{ width: '22px', height: '4px', background: 'var(--color-accent)' }}></span>
-                          </span>
-                          {'COLLECT • TRADE • HOBBIES'}
-                        </div>{' '}
-                        <h1
-                          style={{
-                            fontSize: 'clamp(38px,8.2vw,116px)',
-                            lineHeight: '.9',
-                            letterSpacing: '-.035em',
-                            margin: '0',
-                            textTransform: 'uppercase',
-                            color: 'var(--color-bg)',
-                          }}
-                        >
-                          {'Find your next'}
-                          <br />
-                          <span style={{ color: 'var(--color-accent)' }}>{'Quest'}</span>
-                        </h1>{' '}
-                        <p
-                          style={{
-                            fontSize: 'clamp(14px,1.3vw,17px)',
-                            fontWeight: '600',
-                            letterSpacing: '.14em',
-                            lineHeight: '1.8',
-                            margin: '0',
-                            color: 'var(--color-neutral-300)',
-                          }}
-                        >
-                          {'POKÉMON • COLLECTIBLES'}
-                          <br />
-                          {'ACCESSORIES • AND MORE'}
-                        </p>{' '}
-                        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '8px' }}>
                           {' '}
                           <a
                             href={'#/shop'}
                             className="btn btn-primary"
                             style={{
-                              padding: '17px 20px',
+                              padding: '14px 22px',
                               fontSize: '15px',
-                              letterSpacing: '.06em',
-                              minWidth: '220px',
+                              fontWeight: '600',
+                              gap: '28px',
                               justifyContent: 'space-between',
-                              gap: '24px',
+                              minWidth: v.ctaMin,
                             }}
                           >
-                            {'SHOP NOW '}
-                            <svg
-                              width={'18'}
-                              height={'18'}
-                              viewBox={'0 0 24 24'}
-                              fill={'none'}
-                              stroke={'currentColor'}
-                              strokeWidth={'2.5'}
-                              strokeLinecap={'round'}
-                              strokeLinejoin={'round'}
-                            >
-                              <path d={'M5 12h14M12 5l7 7-7 7'}></path>
-                            </svg>
+                            {'Shop now '}
+                            <span>{'→'}</span>
                           </a>{' '}
                           <a
                             href={'#/shop?cat=psa'}
-                            className="btn sqp2"
+                            className="sq5p0"
                             style={{
-                              padding: '17px 20px',
                               fontSize: '15px',
-                              letterSpacing: '.06em',
-                              border: '1px solid var(--color-neutral-600)',
-                              color: 'var(--color-bg)',
+                              fontWeight: '600',
+                              color: 'var(--color-text)',
+                              textDecoration: 'underline',
+                              textUnderlineOffset: '4px',
+                              textDecorationThickness: '1px',
                             }}
                           >
-                            {'PSA SLABS'}
+                            {'Browse graded cards'}
                           </a>{' '}
                         </div>{' '}
                       </div>{' '}
-                      {v.hasHeroProducts ? (
-                        <>
-                          {' '}
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(3,minmax(0,1fr))',
+                          gap: v.heroTileGap,
+                          minWidth: '0',
+                          width: '100%',
+                          maxWidth: v.heroArtMax,
+                        }}
+                      >
+                        {' '}
+                        {L(v.heroTiles).map((t, $index) => (
+                          <React.Fragment key={$index}>
+                            {' '}
+                            <a
+                              href={t?.href}
+                              className="sq5p1"
+                              style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '8px',
+                                textDecoration: 'none',
+                                color: 'var(--color-text)',
+                                minWidth: '0',
+                              }}
+                            >
+                              <div
+                                style={{
+                                  position: 'relative',
+                                  aspectRatio: '3/4',
+                                  background: 'var(--color-surface)',
+                                  overflow: 'hidden',
+                                }}
+                              >
+                                {' '}
+                                <ProductImageV3
+                                  image={t?.image}
+                                  compact={true}
+                                  __hostStyle={{ position: 'absolute', inset: '0' }}
+                                />{' '}
+                              </div>
+                              <span
+                                style={{
+                                  fontSize: v.heroTileFont,
+                                  fontWeight: '600',
+                                  whiteSpace: 'nowrap',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                }}
+                              >
+                                {T(t?.label)}
+                                {' →'}
+                              </span>{' '}
+                            </a>{' '}
+                          </React.Fragment>
+                        ))}{' '}
+                      </div>{' '}
+                    </div>{' '}
+                  </section>{' '}
+                  {v.hasNew ? (
+                    <>
+                      <section>
+                        <div style={{ maxWidth: '1280px', margin: '0 auto', padding: v.secPad }}>
+                          <div
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'flex-end',
+                              gap: '16px',
+                              marginBottom: '20px',
+                            }}
+                          >
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              <div
+                                style={{
+                                  fontSize: '12px',
+                                  fontWeight: '600',
+                                  letterSpacing: '.12em',
+                                  color: 'var(--color-neutral-700)',
+                                }}
+                              >
+                                <span style={{ color: 'var(--color-accent-700)' }}>{'SQ'}</span>
+                                {' / NEW'}
+                              </div>
+                              <h2
+                                style={{
+                                  fontSize: 'clamp(20px,2vw,26px)',
+                                  fontWeight: '700',
+                                  letterSpacing: '-.01em',
+                                  margin: '0',
+                                  color: 'var(--color-text)',
+                                }}
+                              >
+                                {'New arrivals'}
+                              </h2>
+                            </div>
+                            <a
+                              href={'#/shop?sort=newest'}
+                              className="sq5p0"
+                              style={{
+                                fontSize: '14px',
+                                fontWeight: '600',
+                                color: 'var(--color-text)',
+                                textDecoration: 'none',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {'View all →'}
+                            </a>
+                          </div>
                           <div
                             style={{
                               display: 'grid',
-                              gridTemplateColumns: '1.15fr 1fr',
-                              gridTemplateRows: '1fr 1fr',
-                              gap: '12px',
-                              height: 'clamp(380px,42vw,560px)',
+                              gridTemplateColumns: v.gridCols,
+                              gap: `${S(v.gridGapV)} ${S(v.gridGap)}`,
                             }}
                           >
-                            {' '}
-                            <a
-                              href={v.hero0?.href}
-                              style={{
-                                gridRow: '1 / 3',
-                                position: 'relative',
-                                display: 'block',
-                                background: 'var(--color-surface)',
-                                textDecoration: 'none',
-                              }}
-                            >
-                              {' '}
-                              <ProductImage
-                                image={v.hero0?.image}
-                                __hostStyle={{ position: 'absolute', top: '0', left: '0', right: '0', bottom: '44px' }}
-                              />{' '}
-                              <div
-                                style={{
-                                  position: 'absolute',
-                                  left: '0',
-                                  right: '0',
-                                  bottom: '0',
-                                  height: '44px',
-                                  display: 'flex',
-                                  justifyContent: 'space-between',
-                                  alignItems: 'center',
-                                  gap: '8px',
-                                  padding: '0 14px',
-                                  background: 'var(--color-bg)',
-                                  color: 'var(--color-text)',
-                                  borderTop: '2px solid var(--color-text)',
-                                  fontSize: '13px',
-                                }}
-                              >
-                                <span
-                                  style={{
-                                    fontWeight: '600',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap',
-                                  }}
-                                >
-                                  {T(v.hero0?.name)}
-                                </span>
-                                <span style={{ fontWeight: '800', color: 'var(--color-accent-700)' }}>
-                                  {T(v.hero0?.price)}
-                                </span>
-                              </div>{' '}
-                            </a>{' '}
-                            <a
-                              href={v.hero1?.href}
-                              style={{
-                                position: 'relative',
-                                display: 'block',
-                                background: 'var(--color-surface)',
-                                textDecoration: 'none',
-                              }}
-                            >
-                              {' '}
-                              <ProductImage
-                                image={v.hero1?.image}
-                                __hostStyle={{ position: 'absolute', top: '0', left: '0', right: '0', bottom: '38px' }}
-                              />{' '}
-                              <div
-                                style={{
-                                  position: 'absolute',
-                                  left: '0',
-                                  right: '0',
-                                  bottom: '0',
-                                  height: '38px',
-                                  display: 'flex',
-                                  justifyContent: 'space-between',
-                                  alignItems: 'center',
-                                  gap: '8px',
-                                  padding: '0 12px',
-                                  background: 'var(--color-bg)',
-                                  color: 'var(--color-text)',
-                                  borderTop: '2px solid var(--color-text)',
-                                  fontSize: '12px',
-                                }}
-                              >
-                                <span
-                                  style={{
-                                    fontWeight: '600',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap',
-                                  }}
-                                >
-                                  {T(v.hero1?.name)}
-                                </span>
-                                <span style={{ fontWeight: '800', color: 'var(--color-accent-700)' }}>
-                                  {T(v.hero1?.price)}
-                                </span>
-                              </div>{' '}
-                            </a>{' '}
-                            <a
-                              href={v.hero2?.href}
-                              style={{
-                                position: 'relative',
-                                display: 'block',
-                                background: 'var(--color-surface)',
-                                textDecoration: 'none',
-                              }}
-                            >
-                              {' '}
-                              <ProductImage
-                                image={v.hero2?.image}
-                                __hostStyle={{ position: 'absolute', top: '0', left: '0', right: '0', bottom: '38px' }}
-                              />{' '}
-                              <div
-                                style={{
-                                  position: 'absolute',
-                                  left: '0',
-                                  right: '0',
-                                  bottom: '0',
-                                  height: '38px',
-                                  display: 'flex',
-                                  justifyContent: 'space-between',
-                                  alignItems: 'center',
-                                  gap: '8px',
-                                  padding: '0 12px',
-                                  background: 'var(--color-bg)',
-                                  color: 'var(--color-text)',
-                                  borderTop: '2px solid var(--color-text)',
-                                  fontSize: '12px',
-                                }}
-                              >
-                                <span
-                                  style={{
-                                    fontWeight: '600',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap',
-                                  }}
-                                >
-                                  {T(v.hero2?.name)}
-                                </span>
-                                <span style={{ fontWeight: '800', color: 'var(--color-accent-700)' }}>
-                                  {T(v.hero2?.price)}
-                                </span>
-                              </div>{' '}
-                            </a>{' '}
-                          </div>{' '}
-                        </>
-                      ) : null}{' '}
-                    </div>{' '}
-                  </section>{' '}
-                  <section
-                    style={{
-                      maxWidth: '1320px',
-                      margin: '0 auto',
-                      padding: 'clamp(48px,6vw,88px) clamp(16px,4vw,40px) 0',
-                    }}
-                  >
+                            {L(v.newItems).map((p, $index) => (
+                              <React.Fragment key={$index}>
+                                <ProductCardV3 p={p} dense={v.denseCards} />
+                              </React.Fragment>
+                            ))}
+                          </div>
+                        </div>
+                      </section>
+                    </>
+                  ) : null}{' '}
+                  <section>
                     {' '}
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'flex-end',
-                        gap: '16px',
-                        flexWrap: 'wrap',
-                        borderBottom: '2px solid var(--color-text)',
-                        paddingBottom: '14px',
-                      }}
-                    >
+                    <div style={{ maxWidth: '1280px', margin: '0 auto', padding: v.secPad }}>
                       {' '}
-                      <div>
-                        {' '}
-                        <div
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'flex-end',
+                          gap: '16px',
+                          marginBottom: '20px',
+                        }}
+                      >
+                        <h2
                           style={{
-                            fontSize: '12px',
-                            fontWeight: '800',
-                            letterSpacing: '.14em',
-                            color: 'var(--color-accent-700)',
-                            marginBottom: '6px',
+                            fontSize: 'clamp(20px,2vw,26px)',
+                            fontWeight: '700',
+                            letterSpacing: '-.01em',
+                            margin: '0',
+                            color: 'var(--color-text)',
                           }}
                         >
-                          {'01 — CATEGORIES'}
-                        </div>{' '}
-                        <h2 style={{ fontSize: 'clamp(28px,3.4vw,44px)', margin: '0', textTransform: 'uppercase' }}>
                           {'Shop by category'}
-                        </h2>{' '}
+                        </h2>
+                        <a
+                          href={'#/shop'}
+                          className="sq5p0"
+                          style={{
+                            fontSize: '14px',
+                            fontWeight: '600',
+                            color: 'var(--color-text)',
+                            textDecoration: 'none',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {'View all →'}
+                        </a>
                       </div>{' '}
-                      <a href={'#/shop'} className="btn btn-ghost" style={{ fontSize: '14px' }}>
-                        {'View all products →'}
-                      </a>{' '}
-                    </div>{' '}
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: v.catCols,
-                        gap: '1px',
-                        background: 'var(--color-divider)',
-                        borderBottom: '1px solid var(--color-divider)',
-                      }}
-                    >
-                      {' '}
-                      {L(v.homeCats).map((c, $index) => (
-                        <React.Fragment key={$index}>
-                          {' '}
-                          <a
-                            href={c?.href}
-                            className="sqp3"
-                            style={{
-                              display: 'flex',
-                              flexDirection: 'column',
-                              textDecoration: 'none',
-                              color: 'var(--color-text)',
-                              background: 'var(--color-bg)',
-                            }}
-                          >
+                      <div style={{ display: 'grid', gridTemplateColumns: v.catCols, gap: v.catGap }}>
+                        {' '}
+                        {L(v.homeCats).map((c, $index) => (
+                          <React.Fragment key={$index}>
                             {' '}
-                            <div style={{ position: 'relative', aspectRatio: '4/3' }}>
-                              <ProductImage image={c?.image} __hostStyle={{ position: 'absolute', inset: '0' }} />
-                            </div>{' '}
-                            <div
+                            <a
+                              href={c?.href}
+                              className="sq5p1"
                               style={{
-                                padding: '14px 16px 18px',
                                 display: 'flex',
                                 flexDirection: 'column',
-                                gap: '4px',
+                                gap: '10px',
+                                textDecoration: 'none',
+                                color: 'var(--color-text)',
                               }}
                             >
                               {' '}
-                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
-                                <span style={{ fontWeight: '800', color: 'var(--color-accent-700)' }}>{T(c?.n)}</span>
-                                <span style={{ color: 'var(--color-neutral-700)' }}>{T(c?.countText)}</span>
+                              <div
+                                style={{
+                                  position: 'relative',
+                                  aspectRatio: '1/1',
+                                  background: 'var(--color-surface)',
+                                  overflow: 'hidden',
+                                }}
+                              >
+                                {' '}
+                                <ProductImageV3
+                                  image={c?.image}
+                                  compact={true}
+                                  __hostStyle={{ position: 'absolute', inset: '0' }}
+                                />{' '}
                               </div>{' '}
                               <div
                                 style={{
-                                  fontWeight: '800',
-                                  fontSize: '18px',
-                                  textTransform: 'uppercase',
-                                  letterSpacing: '-.01em',
+                                  display: 'flex',
+                                  alignItems: 'baseline',
+                                  justifyContent: 'space-between',
+                                  gap: '8px',
                                 }}
                               >
-                                {T(c?.name)}
+                                {' '}
+                                <span style={{ fontSize: v.catNameSize, fontWeight: '600', lineHeight: '1.25' }}>
+                                  {T(c?.name)}
+                                </span>{' '}
+                                {c?.hasCount ? (
+                                  <>
+                                    <span
+                                      style={{
+                                        fontSize: '13px',
+                                        color: 'var(--color-neutral-700)',
+                                        whiteSpace: 'nowrap',
+                                      }}
+                                    >
+                                      {T(c?.countText)}
+                                    </span>
+                                  </>
+                                ) : null}{' '}
                               </div>{' '}
-                              <div style={{ fontSize: '13px', color: 'var(--color-neutral-700)' }}>{T(c?.desc)}</div>{' '}
-                            </div>{' '}
-                          </a>{' '}
-                        </React.Fragment>
-                      ))}{' '}
+                            </a>{' '}
+                          </React.Fragment>
+                        ))}{' '}
+                      </div>{' '}
                     </div>{' '}
                   </section>{' '}
-                  <section
-                    style={{
-                      maxWidth: '1320px',
-                      margin: '0 auto',
-                      padding: 'clamp(48px,6vw,88px) clamp(16px,4vw,40px)',
-                    }}
-                  >
+                  {v.hasChase ? (
+                    <>
+                      {' '}
+                      <section style={{ background: 'var(--color-text)', color: 'var(--color-bg)' }}>
+                        {' '}
+                        <div style={{ maxWidth: '1280px', margin: '0 auto', padding: v.secPad }}>
+                          {' '}
+                          <div
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'flex-end',
+                              gap: '16px',
+                              marginBottom: '24px',
+                            }}
+                          >
+                            {' '}
+                            <div>
+                              {' '}
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '8px',
+                                  fontSize: '13px',
+                                  fontWeight: '600',
+                                  color: 'var(--sq-gold)',
+                                  marginBottom: '6px',
+                                }}
+                              >
+                                {'The Chase'}
+                              </div>{' '}
+                              <h2
+                                style={{
+                                  fontSize: 'clamp(22px,2.4vw,30px)',
+                                  fontWeight: '700',
+                                  letterSpacing: '-.01em',
+                                  margin: '0',
+                                  color: 'var(--color-bg)',
+                                }}
+                              >
+                                {'Standout singles and slabs'}
+                              </h2>{' '}
+                            </div>{' '}
+                            <a
+                              href={'#/shop?cat=pokemon'}
+                              className="sq5p2"
+                              style={{
+                                fontSize: '14px',
+                                fontWeight: '600',
+                                color: 'var(--color-bg)',
+                                textDecoration: 'none',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {'View all →'}
+                            </a>{' '}
+                          </div>{' '}
+                          <div
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: v.gridCols,
+                              gap: `${S(v.gridGapV)} ${S(v.gridGap)}`,
+                            }}
+                          >
+                            {' '}
+                            {L(v.chaseItems).map((p, $index) => (
+                              <React.Fragment key={$index}>
+                                {' '}
+                                <div
+                                  style={{ background: 'var(--color-bg)', padding: '12px 12px 14px', minWidth: '0' }}
+                                >
+                                  <ProductCardV3 p={p} dense={v.denseCards} />
+                                </div>{' '}
+                              </React.Fragment>
+                            ))}{' '}
+                          </div>{' '}
+                        </div>{' '}
+                      </section>{' '}
+                    </>
+                  ) : null}{' '}
+                  {v.hasSealed ? (
+                    <>
+                      <section>
+                        <div style={{ maxWidth: '1280px', margin: '0 auto', padding: v.secPad }}>
+                          <div
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'flex-end',
+                              gap: '16px',
+                              marginBottom: '20px',
+                            }}
+                          >
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              <div
+                                style={{
+                                  fontSize: '12px',
+                                  fontWeight: '600',
+                                  letterSpacing: '.12em',
+                                  color: 'var(--color-neutral-700)',
+                                }}
+                              >
+                                <span style={{ color: 'var(--color-accent-700)' }}>{'SQ'}</span>
+                                {' / SEALED'}
+                              </div>
+                              <h2
+                                style={{
+                                  fontSize: 'clamp(20px,2vw,26px)',
+                                  fontWeight: '700',
+                                  letterSpacing: '-.01em',
+                                  margin: '0',
+                                  color: 'var(--color-text)',
+                                }}
+                              >
+                                {'Sealed products'}
+                              </h2>
+                            </div>
+                            <a
+                              href={'#/shop?cat=sealed'}
+                              className="sq5p0"
+                              style={{
+                                fontSize: '14px',
+                                fontWeight: '600',
+                                color: 'var(--color-text)',
+                                textDecoration: 'none',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {'View all →'}
+                            </a>
+                          </div>
+                          <div
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: v.gridCols,
+                              gap: `${S(v.gridGapV)} ${S(v.gridGap)}`,
+                            }}
+                          >
+                            {L(v.sealedItems).map((p, $index) => (
+                              <React.Fragment key={$index}>
+                                <ProductCardV3 p={p} dense={v.denseCards} />
+                              </React.Fragment>
+                            ))}
+                          </div>
+                        </div>
+                      </section>
+                    </>
+                  ) : null}{' '}
+                  {v.hasGraded ? (
+                    <>
+                      <section style={{ borderTop: '1px solid var(--color-divider)' }}>
+                        <div style={{ maxWidth: '1280px', margin: '0 auto', padding: v.secPad }}>
+                          <div
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'flex-end',
+                              gap: '16px',
+                              marginBottom: '20px',
+                            }}
+                          >
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              <div
+                                style={{
+                                  fontSize: '12px',
+                                  fontWeight: '600',
+                                  letterSpacing: '.12em',
+                                  color: 'var(--color-neutral-700)',
+                                }}
+                              >
+                                <span style={{ color: 'var(--color-accent-700)' }}>{'SQ'}</span>
+                                {' / GRADED'}
+                              </div>
+                              <h2
+                                style={{
+                                  fontSize: 'clamp(20px,2vw,26px)',
+                                  fontWeight: '700',
+                                  letterSpacing: '-.01em',
+                                  margin: '0',
+                                  color: 'var(--color-text)',
+                                }}
+                              >
+                                {'Graded cards'}
+                              </h2>
+                            </div>
+                            <a
+                              href={'#/shop?cat=psa'}
+                              className="sq5p0"
+                              style={{
+                                fontSize: '14px',
+                                fontWeight: '600',
+                                color: 'var(--color-text)',
+                                textDecoration: 'none',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {'View all →'}
+                            </a>
+                          </div>
+                          <div
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: v.gridCols,
+                              gap: `${S(v.gridGapV)} ${S(v.gridGap)}`,
+                            }}
+                          >
+                            {L(v.gradedItems).map((p, $index) => (
+                              <React.Fragment key={$index}>
+                                <ProductCardV3 p={p} dense={v.denseCards} />
+                              </React.Fragment>
+                            ))}
+                          </div>
+                        </div>
+                      </section>
+                    </>
+                  ) : null}{' '}
+                  {v.hasHobby ? (
+                    <>
+                      <section style={{ borderTop: '1px solid var(--color-divider)' }}>
+                        <div style={{ maxWidth: '1280px', margin: '0 auto', padding: v.secPad }}>
+                          <div
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'flex-end',
+                              gap: '16px',
+                              marginBottom: '20px',
+                            }}
+                          >
+                            <h2
+                              style={{
+                                fontSize: 'clamp(20px,2vw,26px)',
+                                fontWeight: '700',
+                                letterSpacing: '-.01em',
+                                margin: '0',
+                                color: 'var(--color-text)',
+                              }}
+                            >
+                              {'Accessories & collectibles'}
+                            </h2>
+                            <a
+                              href={'#/shop?group=hobbies'}
+                              className="sq5p0"
+                              style={{
+                                fontSize: '14px',
+                                fontWeight: '600',
+                                color: 'var(--color-text)',
+                                textDecoration: 'none',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {'View all →'}
+                            </a>
+                          </div>
+                          <div
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: v.gridCols,
+                              gap: `${S(v.gridGapV)} ${S(v.gridGap)}`,
+                            }}
+                          >
+                            {L(v.hobbyItems).map((p, $index) => (
+                              <React.Fragment key={$index}>
+                                <ProductCardV3 p={p} dense={v.denseCards} />
+                              </React.Fragment>
+                            ))}
+                          </div>
+                        </div>
+                      </section>
+                    </>
+                  ) : null}{' '}
+                  <section style={{ borderTop: '1px solid var(--color-divider)' }}>
                     {' '}
                     <div
                       style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'flex-end',
-                        gap: '16px',
-                        flexWrap: 'wrap',
-                        borderBottom: '2px solid var(--color-text)',
-                        paddingBottom: '14px',
-                        marginBottom: '20px',
+                        maxWidth: '1280px',
+                        margin: '0 auto',
+                        padding: v.secPad,
+                        display: 'grid',
+                        gridTemplateColumns: v.brandCols,
+                        gap: v.heroGap,
+                        alignItems: 'start',
                       }}
                     >
                       {' '}
-                      <div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '520px' }}>
                         {' '}
                         <div
                           style={{
-                            fontSize: '12px',
-                            fontWeight: '800',
-                            letterSpacing: '.14em',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            fontSize: '13px',
+                            fontWeight: '600',
                             color: 'var(--color-accent-700)',
-                            marginBottom: '6px',
                           }}
                         >
-                          {'02 — FEATURED'}
+                          {'About SIDE QUEST'}
                         </div>{' '}
-                        <h2 style={{ fontSize: 'clamp(28px,3.4vw,44px)', margin: '0', textTransform: 'uppercase' }}>
-                          {'Featured finds'}
+                        <h2
+                          style={{
+                            fontSize: 'clamp(20px,2vw,26px)',
+                            fontWeight: '700',
+                            letterSpacing: '-.01em',
+                            margin: '0',
+                          }}
+                        >
+                          {'A collector-focused shop for Pokémon TCG, collectibles and hobby finds.'}
                         </h2>{' '}
-                      </div>{' '}
-                      <a href={'#/shop'} className="btn btn-ghost" style={{ fontSize: '14px' }}>
-                        {'Shop all →'}
-                      </a>{' '}
-                    </div>{' '}
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: `repeat(auto-fill,minmax(${S(v.homeCardMin)},1fr))`,
-                        gap: v.gridGap,
-                      }}
-                    >
-                      {' '}
-                      {L(v.featured).map((p, $index) => (
-                        <React.Fragment key={$index}>
-                          {' '}
-                          <ProductCard p={p} />{' '}
-                        </React.Fragment>
-                      ))}{' '}
-                    </div>{' '}
-                  </section>{' '}
-                  <section
-                    style={{
-                      borderTop: '2px solid var(--color-text)',
-                      borderBottom: '2px solid var(--color-text)',
-                      background: 'var(--color-surface)',
-                    }}
-                  >
-                    {' '}
-                    <div
-                      style={{
-                        maxWidth: '1320px',
-                        margin: '0 auto',
-                        display: 'grid',
-                        gridTemplateColumns: v.trustCols,
-                        gap: '1px',
-                        background: 'var(--color-divider)',
-                      }}
-                    >
-                      {' '}
-                      <div
-                        style={{
-                          background: 'var(--color-surface)',
-                          padding: '32px clamp(16px,3vw,32px)',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '10px',
-                        }}
-                      >
-                        {' '}
-                        <svg
-                          width={'28'}
-                          height={'28'}
-                          viewBox={'0 0 24 24'}
-                          fill={'none'}
-                          stroke={'currentColor'}
-                          strokeWidth={'2'}
-                          strokeLinecap={'round'}
-                          strokeLinejoin={'round'}
-                          style={{ color: 'var(--color-accent)' }}
+                        <a
+                          href={'#/about'}
+                          className="sq5p0"
+                          style={{
+                            fontSize: '15px',
+                            fontWeight: '600',
+                            color: 'var(--color-text)',
+                            textDecoration: 'underline',
+                            textUnderlineOffset: '4px',
+                            textDecorationThickness: '1px',
+                            alignSelf: 'flex-start',
+                          }}
                         >
-                          <path
-                            d={
-                              'M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z'
-                            }
-                          ></path>
-                          <path d={'m9 12 2 2 4-4'}></path>
-                        </svg>{' '}
-                        <div style={{ fontWeight: '800', fontSize: '16px', letterSpacing: '.04em' }}>
-                          {'AUTHENTIC PRODUCTS'}
-                        </div>{' '}
-                        <div style={{ fontSize: '14px', color: 'var(--color-neutral-700)' }}>
-                          {'Sourced from trusted suppliers'}
-                        </div>{' '}
+                          {'Learn more about us'}
+                        </a>{' '}
                       </div>{' '}
-                      <div
-                        style={{
-                          background: 'var(--color-surface)',
-                          padding: '32px clamp(16px,3vw,32px)',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '10px',
-                        }}
-                      >
+                      <div style={{ display: 'grid', gridTemplateColumns: v.serviceCols, gap: '24px' }}>
                         {' '}
-                        <svg
-                          width={'28'}
-                          height={'28'}
-                          viewBox={'0 0 24 24'}
-                          fill={'none'}
-                          stroke={'currentColor'}
-                          strokeWidth={'2'}
-                          strokeLinecap={'round'}
-                          strokeLinejoin={'round'}
-                          style={{ color: 'var(--color-accent)' }}
-                        >
-                          <path d={'M16.5 9.4 7.55 4.24'}></path>
-                          <path
-                            d={
-                              'M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z'
-                            }
-                          ></path>
-                          <path d={'M3.29 7 12 12l8.71-5'}></path>
-                          <path d={'M12 22V12'}></path>
-                        </svg>{' '}
-                        <div style={{ fontWeight: '800', fontSize: '16px', letterSpacing: '.04em' }}>
-                          {'SECURE PACKAGING'}
-                        </div>{' '}
-                        <div style={{ fontSize: '14px', color: 'var(--color-neutral-700)' }}>
-                          {'Cards packed carefully for protection'}
-                        </div>{' '}
-                      </div>{' '}
-                      <div
-                        style={{
-                          background: 'var(--color-surface)',
-                          padding: '32px clamp(16px,3vw,32px)',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '10px',
-                        }}
-                      >
-                        {' '}
-                        <svg
-                          width={'28'}
-                          height={'28'}
-                          viewBox={'0 0 24 24'}
-                          fill={'none'}
-                          stroke={'currentColor'}
-                          strokeWidth={'2'}
-                          strokeLinecap={'round'}
-                          strokeLinejoin={'round'}
-                          style={{ color: 'var(--color-accent)' }}
-                        >
-                          <path d={'M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2'}></path>
-                          <path d={'M15 18H9'}></path>
-                          <path
-                            d={'M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14'}
-                          ></path>
-                          <circle cx={'17'} cy={'18'} r={'2'}></circle>
-                          <circle cx={'7'} cy={'18'} r={'2'}></circle>
-                        </svg>{' '}
-                        <div style={{ fontWeight: '800', fontSize: '16px', letterSpacing: '.04em' }}>
-                          {'NATIONWIDE SHIPPING'}
-                        </div>{' '}
-                        <div style={{ fontSize: '14px', color: 'var(--color-neutral-700)' }}>
-                          {'Shipping throughout the Philippines'}
-                        </div>{' '}
-                      </div>{' '}
-                      <div
-                        style={{
-                          background: 'var(--color-surface)',
-                          padding: '32px clamp(16px,3vw,32px)',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '10px',
-                        }}
-                      >
-                        {' '}
-                        <svg
-                          width={'28'}
-                          height={'28'}
-                          viewBox={'0 0 24 24'}
-                          fill={'none'}
-                          stroke={'currentColor'}
-                          strokeWidth={'2'}
-                          strokeLinecap={'round'}
-                          strokeLinejoin={'round'}
-                          style={{ color: 'var(--color-accent)' }}
-                        >
-                          <path d={'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2'}></path>
-                          <circle cx={'9'} cy={'7'} r={'4'}></circle>
-                          <path d={'M22 21v-2a4 4 0 0 0-3-3.87'}></path>
-                          <path d={'M16 3.13a4 4 0 0 1 0 7.75'}></path>
-                        </svg>{' '}
-                        <div style={{ fontWeight: '800', fontSize: '16px', letterSpacing: '.04em' }}>
-                          {'HOBBY COMMUNITY'}
-                        </div>{' '}
-                        <div style={{ fontSize: '14px', color: 'var(--color-neutral-700)' }}>
-                          {'Buy • Sell • Trade • Connect'}
-                        </div>{' '}
+                        {L(v.services).map((t, $index) => (
+                          <React.Fragment key={$index}>
+                            {' '}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              {' '}
+                              <span style={{ color: 'var(--color-accent)' }}>{T(t?.icon)}</span>{' '}
+                              <div style={{ fontSize: '15px', fontWeight: '600' }}>{T(t?.title)}</div>{' '}
+                              <div style={{ fontSize: '14px', lineHeight: '1.5', color: 'var(--color-neutral-700)' }}>
+                                {T(t?.text)}
+                              </div>{' '}
+                            </div>{' '}
+                          </React.Fragment>
+                        ))}{' '}
                       </div>{' '}
                     </div>{' '}
                   </section>
@@ -1956,46 +2333,115 @@ export default class StoreApp extends React.Component {
                   {' '}
                   <div
                     data-screen-label={'Shop'}
-                    style={{ maxWidth: '1320px', margin: '0 auto', padding: '24px clamp(16px,4vw,40px) 72px' }}
+                    style={{ maxWidth: '1280px', margin: '0 auto', padding: '24px clamp(16px,3vw,32px) 72px' }}
                   >
                     {' '}
-                    <div style={{ fontSize: '12px', color: 'var(--color-neutral-700)', display: 'flex', gap: '6px' }}>
-                      <a href={'#/'} style={{ color: 'inherit' }}>
-                        {'Home'}
-                      </a>
-                      <span>{'/'}</span>
-                      <span>{'Shop'}</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: v.introPad }}>
+                      {' '}
+                      <div
+                        style={{
+                          fontSize: '12px',
+                          fontWeight: '600',
+                          letterSpacing: '.12em',
+                          color: 'var(--color-neutral-700)',
+                        }}
+                      >
+                        <span style={{ color: 'var(--color-accent-700)' }}>{'SQ'}</span>
+                        {' / '}
+                        {T(v.shopKicker)}
+                      </div>{' '}
+                      <h1
+                        style={{
+                          fontSize: 'clamp(28px,3.2vw,36px)',
+                          fontWeight: '700',
+                          letterSpacing: '-.02em',
+                          lineHeight: '1.1',
+                          margin: '0',
+                        }}
+                      >
+                        {T(v.shopTitle)}
+                      </h1>{' '}
+                      {v.hasShopIntro ? (
+                        <>
+                          <p
+                            style={{
+                              margin: '2px 0 0',
+                              fontSize: '15px',
+                              lineHeight: '1.5',
+                              color: 'var(--color-neutral-800)',
+                              maxWidth: '560px',
+                            }}
+                          >
+                            {T(v.shopIntro)}
+                          </p>
+                        </>
+                      ) : null}{' '}
                     </div>{' '}
-                    <h1
-                      style={{
-                        fontSize: 'clamp(32px,4.4vw,56px)',
-                        margin: '8px 0 16px',
-                        textTransform: 'uppercase',
-                        letterSpacing: '-.025em',
-                      }}
-                    >
-                      {T(v.shopTitle)}
-                    </h1>{' '}
-                    <div
+                    <nav
+                      aria-label={'Categories'}
                       style={{
                         display: 'flex',
-                        alignItems: 'center',
-                        gap: '12px',
-                        flexWrap: 'wrap',
-                        borderTop: '2px solid var(--color-text)',
+                        gap: v.tabGap,
+                        overflowX: 'auto',
+                        scrollbarWidth: 'none',
                         borderBottom: '1px solid var(--color-divider)',
-                        padding: '10px 0',
-                        marginBottom: '24px',
+                        margin: `0 ${S(v.tabBleed)}`,
+                        padding: `0 ${S(v.tabBleedPad)}`,
                       }}
                     >
+                      {' '}
+                      {L(v.catTabs).map((c, $index) => (
+                        <React.Fragment key={$index}>
+                          {' '}
+                          <button
+                            onClick={c?.onClick}
+                            aria-pressed={c?.on}
+                            className="sq5p0"
+                            style={{
+                              flex: 'none',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '7px',
+                              padding: '12px 0 11px',
+                              marginBottom: '-1px',
+                              border: '0',
+                              borderBottom: `2px solid ${S(c?.bar)}`,
+                              background: 'transparent',
+                              font: 'inherit',
+                              fontSize: '14px',
+                              fontWeight: c?.fw,
+                              color: c?.fg,
+                              cursor: 'pointer',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            <span style={{ width: '5px', height: '5px', flex: 'none', background: c?.dot }}></span>
+                            {T(c?.label)}
+                            <span style={{ fontSize: '12px', fontWeight: '400', color: 'var(--color-neutral-600)' }}>
+                              {T(c?.count)}
+                            </span>
+                          </button>{' '}
+                        </React.Fragment>
+                      ))}{' '}
+                    </nav>{' '}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '14px 0 20px' }}>
                       {' '}
                       {v.isMobile ? (
                         <>
                           {' '}
                           <button
                             onClick={v.openFilters}
-                            className="btn btn-secondary"
-                            style={{ minHeight: '44px', gap: '8px' }}
+                            className="btn"
+                            style={{
+                              minHeight: '40px',
+                              gap: '8px',
+                              padding: '0 14px',
+                              fontSize: '14px',
+                              fontWeight: '600',
+                              border: '1px solid var(--color-text)',
+                              background: 'transparent',
+                              color: 'var(--color-text)',
+                            }}
                           >
                             {' '}
                             <svg
@@ -2004,7 +2450,7 @@ export default class StoreApp extends React.Component {
                               viewBox={'0 0 24 24'}
                               fill={'none'}
                               stroke={'currentColor'}
-                              strokeWidth={'2'}
+                              strokeWidth={'1.8'}
                               strokeLinecap={'round'}
                             >
                               <path d={'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6'}></path>
@@ -2013,7 +2459,9 @@ export default class StoreApp extends React.Component {
                           </button>{' '}
                         </>
                       ) : null}{' '}
-                      <span style={{ fontSize: '14px', color: 'var(--color-neutral-700)' }}>{T(v.resultText)}</span>{' '}
+                      <span style={{ fontSize: '14px', color: 'var(--color-neutral-700)', whiteSpace: 'nowrap' }}>
+                        {T(v.resultText)}
+                      </span>{' '}
                       <label
                         style={{
                           marginLeft: 'auto',
@@ -2021,15 +2469,27 @@ export default class StoreApp extends React.Component {
                           alignItems: 'center',
                           gap: '8px',
                           fontSize: '13px',
+                          minWidth: '0',
                         }}
                       >
                         {' '}
-                        <span style={{ color: 'var(--color-neutral-700)' }}>{'Sort'}</span>{' '}
+                        {v.isDesktop ? (
+                          <>
+                            <span style={{ color: 'var(--color-neutral-700)' }}>{'Sort'}</span>
+                          </>
+                        ) : null}{' '}
                         <select
                           value={v.sort}
                           onChange={v.onSort}
+                          aria-label={'Sort products'}
                           className="input"
-                          style={{ width: 'auto', minWidth: '180px', minHeight: '40px', background: 'var(--color-bg)' }}
+                          style={{
+                            width: 'auto',
+                            minWidth: v.sortMin,
+                            maxWidth: '100%',
+                            minHeight: '40px',
+                            background: 'var(--color-bg)',
+                          }}
                         >
                           {L(v.sortOpts).map((o, $index) => (
                             <React.Fragment key={$index}>
@@ -2073,15 +2533,13 @@ export default class StoreApp extends React.Component {
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'space-between',
-                                borderBottom: '2px solid var(--color-text)',
+                                borderBottom: '1px solid var(--color-divider)',
                                 paddingBottom: '12px',
                                 marginBottom: '4px',
                               }}
                             >
                               {' '}
-                              <div style={{ fontWeight: '800', fontSize: '20px', textTransform: 'uppercase' }}>
-                                {'Filters'}
-                              </div>{' '}
+                              <div style={{ fontWeight: '700', fontSize: '20px' }}>{'Filters'}</div>{' '}
                               <button
                                 onClick={v.closeFilters}
                                 aria-label={'Close filters'}
@@ -2111,61 +2569,10 @@ export default class StoreApp extends React.Component {
                             </div>{' '}
                           </>
                         ) : null}{' '}
-                        <div
-                          style={{
-                            fontSize: '12px',
-                            fontWeight: '800',
-                            letterSpacing: '.1em',
-                            textTransform: 'uppercase',
-                            padding: '14px 0 10px',
-                          }}
-                        >
-                          {'Category'}
-                        </div>{' '}
-                        <div style={{ display: 'flex', flexDirection: 'column' }}>
-                          {' '}
-                          {L(v.catRows).map((c, $index) => (
-                            <React.Fragment key={$index}>
-                              {' '}
-                              <button
-                                onClick={c?.onClick}
-                                style={{
-                                  display: 'flex',
-                                  justifyContent: 'space-between',
-                                  alignItems: 'center',
-                                  width: '100%',
-                                  minHeight: '38px',
-                                  padding: '8px 10px',
-                                  border: '0',
-                                  background: c?.bg,
-                                  color: c?.fg,
-                                  font: 'inherit',
-                                  fontSize: '14px',
-                                  fontWeight: c?.fw,
-                                  cursor: 'pointer',
-                                  textAlign: 'left',
-                                }}
-                              >
-                                <span>{T(c?.label)}</span>
-                                <span style={{ fontSize: '12px', opacity: '.7' }}>{T(c?.count)}</span>
-                              </button>{' '}
-                            </React.Fragment>
-                          ))}{' '}
-                        </div>{' '}
                         {v.hasSubs ? (
                           <>
                             {' '}
-                            <div
-                              style={{
-                                fontSize: '12px',
-                                fontWeight: '800',
-                                letterSpacing: '.1em',
-                                textTransform: 'uppercase',
-                                padding: '16px 0 10px',
-                                marginTop: '12px',
-                                borderTop: '1px solid var(--color-divider)',
-                              }}
-                            >
+                            <div style={{ fontSize: '14px', fontWeight: '600', padding: '4px 0 8px' }}>
                               {'Subcategory'}
                             </div>{' '}
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
@@ -2180,6 +2587,7 @@ export default class StoreApp extends React.Component {
                                       minHeight: '34px',
                                       font: 'inherit',
                                       fontSize: '13px',
+                                      whiteSpace: 'nowrap',
                                       border: `1px solid ${S(o?.bd)}`,
                                       background: o?.bg,
                                       color: o?.fg,
@@ -2195,13 +2603,11 @@ export default class StoreApp extends React.Component {
                         ) : null}{' '}
                         <div
                           style={{
-                            fontSize: '12px',
-                            fontWeight: '800',
-                            letterSpacing: '.1em',
-                            textTransform: 'uppercase',
-                            padding: '16px 0 10px',
-                            marginTop: '12px',
-                            borderTop: '1px solid var(--color-divider)',
+                            fontSize: '14px',
+                            fontWeight: '600',
+                            padding: v.pricePad,
+                            marginTop: v.priceMt,
+                            borderTop: v.priceBt,
                           }}
                         >
                           {'Price (₱)'}
@@ -2242,11 +2648,9 @@ export default class StoreApp extends React.Component {
                             {' '}
                             <div
                               style={{
-                                fontSize: '12px',
-                                fontWeight: '800',
-                                letterSpacing: '.1em',
-                                textTransform: 'uppercase',
-                                padding: '16px 0 10px',
+                                fontSize: '14px',
+                                fontWeight: '600',
+                                padding: '16px 0 8px',
                                 marginTop: '12px',
                                 borderTop: '1px solid var(--color-divider)',
                               }}
@@ -2265,6 +2669,7 @@ export default class StoreApp extends React.Component {
                                       minHeight: '34px',
                                       font: 'inherit',
                                       fontSize: '13px',
+                                      whiteSpace: 'nowrap',
                                       border: `1px solid ${S(o?.bd)}`,
                                       background: o?.bg,
                                       color: o?.fg,
@@ -2285,7 +2690,7 @@ export default class StoreApp extends React.Component {
                             gap: '8px',
                             marginTop: '20px',
                             paddingTop: '16px',
-                            borderTop: '2px solid var(--color-text)',
+                            borderTop: '1px solid var(--color-divider)',
                           }}
                         >
                           {' '}
@@ -2320,15 +2725,15 @@ export default class StoreApp extends React.Component {
                             <div
                               style={{
                                 display: 'grid',
-                                gridTemplateColumns: `repeat(auto-fill,minmax(${S(v.cardMin)},1fr))`,
-                                gap: v.gridGap,
+                                gridTemplateColumns: v.shopGridCols,
+                                gap: `${S(v.gridGapV)} ${S(v.gridGap)}`,
                               }}
                             >
                               {' '}
                               {L(v.results).map((p, $index) => (
                                 <React.Fragment key={$index}>
                                   {' '}
-                                  <ProductCard p={p} />{' '}
+                                  <ProductCardV3 p={p} dense={v.denseCards} />{' '}
                                 </React.Fragment>
                               ))}{' '}
                             </div>{' '}
@@ -2339,26 +2744,79 @@ export default class StoreApp extends React.Component {
                             {' '}
                             <div
                               style={{
-                                border: '2px solid var(--color-text)',
-                                padding: '40px clamp(20px,4vw,48px)',
+                                padding: v.emptyPad,
                                 display: 'flex',
                                 flexDirection: 'column',
-                                gap: '12px',
+                                gap: '10px',
                                 alignItems: 'flex-start',
                               }}
                             >
                               {' '}
-                              <div style={{ fontWeight: '800', fontSize: '22px', textTransform: 'uppercase' }}>
-                                {T(v.noResultsTitle)}
-                              </div>{' '}
-                              <p style={{ margin: '0', color: 'var(--color-neutral-700)' }}>{T(v.noResultsText)}</p>{' '}
-                              {v.hasActiveFilters ? (
+                              <span
+                                style={{
+                                  width: '28px',
+                                  height: '2px',
+                                  background: 'var(--sq-gold)',
+                                  marginBottom: '6px',
+                                }}
+                              ></span>{' '}
+                              <p style={{ margin: '0', fontSize: '18px', fontWeight: '600' }}>{T(v.noResultsTitle)}</p>{' '}
+                              {v.hasNoResultsText ? (
                                 <>
-                                  <button onClick={v.clearFilters} className="btn btn-primary">
-                                    {'Clear filters'}
-                                  </button>
+                                  <p style={{ margin: '0', fontSize: '15px', color: 'var(--color-neutral-700)' }}>
+                                    {T(v.noResultsText)}
+                                  </p>
                                 </>
                               ) : null}{' '}
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  gap: '20px',
+                                  flexWrap: 'wrap',
+                                  alignItems: 'center',
+                                  marginTop: '6px',
+                                }}
+                              >
+                                {' '}
+                                {v.hasActiveFilters ? (
+                                  <>
+                                    <button
+                                      onClick={v.clearFilters}
+                                      className="sq5p0"
+                                      style={{
+                                        padding: '0',
+                                        border: '0',
+                                        background: 'transparent',
+                                        font: 'inherit',
+                                        fontSize: '15px',
+                                        fontWeight: '600',
+                                        color: 'var(--color-text)',
+                                        textDecoration: 'underline',
+                                        textUnderlineOffset: '4px',
+                                        cursor: 'pointer',
+                                      }}
+                                    >
+                                      {'Clear filters'}
+                                    </button>
+                                  </>
+                                ) : null}{' '}
+                                {v.showEmptyLink ? (
+                                  <>
+                                    <a
+                                      href={v.emptyLinkHref}
+                                      className="sq5p0"
+                                      style={{
+                                        fontSize: '15px',
+                                        fontWeight: '600',
+                                        color: 'var(--color-text)',
+                                        textDecoration: 'none',
+                                      }}
+                                    >
+                                      {T(v.emptyLinkText)}
+                                    </a>
+                                  </>
+                                ) : null}{' '}
+                              </div>{' '}
                             </div>{' '}
                           </>
                         ) : null}{' '}
@@ -2373,7 +2831,7 @@ export default class StoreApp extends React.Component {
                   {' '}
                   <div
                     data-screen-label={'Product'}
-                    style={{ maxWidth: '1320px', margin: '0 auto', padding: '20px clamp(16px,4vw,40px) 80px' }}
+                    style={{ maxWidth: '1280px', margin: '0 auto', padding: v.pagePad }}
                   >
                     {' '}
                     {v.pNotFound ? (
@@ -2381,19 +2839,40 @@ export default class StoreApp extends React.Component {
                         {' '}
                         <div
                           style={{
-                            padding: '64px 0',
+                            padding: '48px 0',
                             display: 'flex',
                             flexDirection: 'column',
                             gap: '12px',
                             alignItems: 'flex-start',
                           }}
                         >
-                          <h1 style={{ textTransform: 'uppercase', margin: '0' }}>{'Product not found'}</h1>
-                          <p style={{ margin: '0', color: 'var(--color-neutral-700)' }}>
-                            {'It may have sold or been removed.'}
+                          <h1
+                            style={{
+                              fontSize: 'clamp(26px,3vw,32px)',
+                              fontWeight: '700',
+                              letterSpacing: '-.015em',
+                              lineHeight: '1.15',
+                              margin: '0',
+                            }}
+                          >
+                            {'Product not found'}
+                          </h1>
+                          <p style={{ margin: '0', fontSize: '15px', color: 'var(--color-neutral-700)' }}>
+                            {'This product may have sold or been removed.'}
                           </p>
-                          <a href={'#/shop'} className="btn btn-primary">
-                            {'Back to shop'}
+                          <a
+                            href={'#/shop'}
+                            className="sq5p0"
+                            style={{
+                              fontSize: '15px',
+                              fontWeight: '600',
+                              color: 'var(--color-text)',
+                              textDecoration: 'underline',
+                              textUnderlineOffset: '4px',
+                              textDecorationThickness: '1px',
+                            }}
+                          >
+                            {'Browse all products'}
                           </a>
                         </div>{' '}
                       </>
@@ -2403,7 +2882,7 @@ export default class StoreApp extends React.Component {
                         {' '}
                         <div
                           style={{
-                            fontSize: '12px',
+                            fontSize: '13px',
                             color: 'var(--color-neutral-700)',
                             display: 'flex',
                             gap: '6px',
@@ -2421,14 +2900,12 @@ export default class StoreApp extends React.Component {
                           <a href={v.pd?.catHref} style={{ color: 'inherit' }}>
                             {T(v.pd?.catLabel)}
                           </a>
-                          <span>{'/'}</span>
-                          <span style={{ color: 'var(--color-text)' }}>{T(v.pd?.name)}</span>
                         </div>{' '}
                         <div
                           style={{
                             display: 'grid',
-                            gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,400px),1fr))',
-                            gap: 'clamp(24px,4vw,64px)',
+                            gridTemplateColumns: v.prodCols,
+                            gap: 'clamp(24px,4vw,56px)',
                             marginTop: '16px',
                             alignItems: 'start',
                           }}
@@ -2438,21 +2915,18 @@ export default class StoreApp extends React.Component {
                             style={{
                               display: 'flex',
                               flexDirection: 'column',
-                              gap: '10px',
+                              gap: '12px',
                               position: v.galleryPos,
-                              top: '150px',
+                              top: '96px',
+                              minWidth: '0',
                             }}
                           >
                             {' '}
                             <div
-                              style={{
-                                position: 'relative',
-                                aspectRatio: '1/1',
-                                border: '1px solid var(--color-divider)',
-                              }}
+                              style={{ position: 'relative', aspectRatio: '1/1', background: 'var(--color-surface)' }}
                             >
                               {' '}
-                              <ProductImage
+                              <ProductImageV3
                                 image={v.pd?.mainImage}
                                 __hostStyle={{ position: 'absolute', inset: '0' }}
                               />{' '}
@@ -2461,12 +2935,11 @@ export default class StoreApp extends React.Component {
                                   <span
                                     style={{
                                       position: 'absolute',
-                                      top: '14px',
-                                      left: '14px',
-                                      padding: '5px 10px',
+                                      top: '12px',
+                                      left: '12px',
+                                      padding: '3px 8px',
                                       fontSize: '12px',
-                                      fontWeight: '800',
-                                      letterSpacing: '.06em',
+                                      fontWeight: '600',
                                       background: v.pd?.badgeBg,
                                       color: v.pd?.badgeFg,
                                     }}
@@ -2476,90 +2949,129 @@ export default class StoreApp extends React.Component {
                                 </>
                               ) : null}{' '}
                             </div>{' '}
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: '8px' }}>
-                              {' '}
-                              {L(v.pd?.thumbs).map((t, $index) => (
-                                <React.Fragment key={$index}>
+                            {v.pd?.hasThumbs ? (
+                              <>
+                                {' '}
+                                <div
+                                  style={{
+                                    display: 'grid',
+                                    gridTemplateColumns: 'repeat(5,minmax(0,1fr))',
+                                    gap: '8px',
+                                  }}
+                                >
                                   {' '}
-                                  <button
-                                    onClick={t?.onClick}
-                                    aria-label={t?.label}
-                                    style={{
-                                      position: 'relative',
-                                      aspectRatio: '1/1',
-                                      padding: '0',
-                                      border: `2px solid ${S(t?.bd)}`,
-                                      background: 'var(--color-surface)',
-                                      cursor: 'pointer',
-                                    }}
-                                  >
-                                    {' '}
-                                    <ProductImage
-                                      image={t?.image}
-                                      compact={true}
-                                      __hostStyle={{ position: 'absolute', inset: '0' }}
-                                    />{' '}
-                                  </button>{' '}
-                                </React.Fragment>
-                              ))}{' '}
-                            </div>{' '}
-                          </div>{' '}
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '18px', minWidth: '0' }}>
-                            {' '}
-                            <div
-                              style={{
-                                fontSize: '12px',
-                                fontWeight: '800',
-                                letterSpacing: '.12em',
-                                textTransform: 'uppercase',
-                                color: 'var(--color-accent-700)',
-                              }}
-                            >
-                              {T(v.pd?.kicker)}
-                            </div>{' '}
-                            <h1
-                              style={{
-                                fontSize: 'clamp(28px,3.2vw,44px)',
-                                margin: '-8px 0 0',
-                                letterSpacing: '-.02em',
-                                textWrap: 'pretty',
-                              }}
-                            >
-                              {T(v.pd?.name)}
-                            </h1>{' '}
-                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                              {' '}
-                              {L(v.pd?.chips).map((c, $index) => (
-                                <React.Fragment key={$index}>
-                                  <span
-                                    style={{
-                                      padding: '4px 10px',
-                                      fontSize: '12px',
-                                      fontWeight: '600',
-                                      border: '1px solid var(--color-text)',
-                                    }}
-                                  >
-                                    {T(c)}
+                                  {L(v.pd?.thumbs).map((t, $index) => (
+                                    <React.Fragment key={$index}>
+                                      {' '}
+                                      <button
+                                        onClick={t?.onClick}
+                                        aria-label={t?.label}
+                                        style={{
+                                          position: 'relative',
+                                          aspectRatio: '1/1',
+                                          padding: '0',
+                                          border: `1px solid ${S(t?.bd)}`,
+                                          background: 'var(--color-surface)',
+                                          cursor: 'pointer',
+                                        }}
+                                      >
+                                        {' '}
+                                        <ProductImageV3
+                                          image={t?.image}
+                                          compact={true}
+                                          __hostStyle={{ position: 'absolute', inset: '0' }}
+                                        />{' '}
+                                      </button>{' '}
+                                    </React.Fragment>
+                                  ))}{' '}
+                                </div>{' '}
+                              </>
+                            ) : null}{' '}
+                            {v.pd?.isUnique ? (
+                              <>
+                                {' '}
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    gap: '10px',
+                                    alignItems: 'flex-start',
+                                    fontSize: '14px',
+                                    lineHeight: '1.45',
+                                    color: 'var(--color-neutral-800)',
+                                  }}
+                                >
+                                  <span style={{ flex: 'none', color: 'var(--color-text)', marginTop: '1px' }}>
+                                    <svg
+                                      width={'18'}
+                                      height={'18'}
+                                      viewBox={'0 0 24 24'}
+                                      fill={'none'}
+                                      stroke={'currentColor'}
+                                      strokeWidth={'1.8'}
+                                      strokeLinecap={'round'}
+                                      strokeLinejoin={'round'}
+                                    >
+                                      <path
+                                        d={
+                                          'M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z'
+                                        }
+                                      ></path>
+                                      <path d={'m9 12 2 2 4-4'}></path>
+                                    </svg>
                                   </span>
-                                </React.Fragment>
-                              ))}{' '}
+                                  <span>
+                                    <strong style={{ fontWeight: '600', color: 'var(--color-text)' }}>
+                                      {'This exact card ships to you.'}
+                                    </strong>
+                                    {' It’s a single physical item, not one of several copies.'}
+                                  </span>
+                                </div>{' '}
+                              </>
+                            ) : null}{' '}
+                          </div>{' '}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', minWidth: '0' }}>
+                            {' '}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              {' '}
+                              <a
+                                href={v.pd?.catHref}
+                                className="sq5p0"
+                                style={{
+                                  fontSize: '13px',
+                                  color: 'var(--color-neutral-700)',
+                                  textDecoration: 'none',
+                                  alignSelf: 'flex-start',
+                                }}
+                              >
+                                {T(v.pd?.catLabel)}
+                              </a>{' '}
+                              <h1
+                                style={{
+                                  fontSize: 'clamp(24px,2.6vw,30px)',
+                                  fontWeight: '700',
+                                  letterSpacing: '-.015em',
+                                  lineHeight: '1.2',
+                                  margin: '0',
+                                  textWrap: 'pretty',
+                                }}
+                              >
+                                {T(v.pd?.name)}
+                              </h1>{' '}
+                              {v.pd?.hasSub ? (
+                                <>
+                                  <div style={{ fontSize: '15px', color: 'var(--color-neutral-700)' }}>
+                                    {T(v.pd?.subline)}
+                                  </div>
+                                </>
+                              ) : null}{' '}
                             </div>{' '}
-                            <div
-                              style={{
-                                borderTop: '2px solid var(--color-text)',
-                                paddingTop: '16px',
-                                display: 'flex',
-                                alignItems: 'baseline',
-                                gap: '12px',
-                                flexWrap: 'wrap',
-                              }}
-                            >
+                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' }}>
                               {' '}
                               <span
                                 style={{
-                                  fontSize: 'clamp(32px,3.4vw,42px)',
-                                  fontWeight: '800',
-                                  letterSpacing: '-.02em',
+                                  fontSize: '26px',
+                                  fontWeight: '700',
+                                  letterSpacing: '-.01em',
                                   color: v.pd?.priceColor,
                                 }}
                               >
@@ -2569,7 +3081,7 @@ export default class StoreApp extends React.Component {
                                 <>
                                   <span
                                     style={{
-                                      fontSize: '18px',
+                                      fontSize: '16px',
                                       textDecoration: 'line-through',
                                       color: 'var(--color-neutral-600)',
                                     }}
@@ -2577,227 +3089,208 @@ export default class StoreApp extends React.Component {
                                     {T(v.pd?.origPriceText)}
                                   </span>
                                   <span
-                                    style={{
-                                      padding: '4px 8px',
-                                      fontSize: '12px',
-                                      fontWeight: '800',
-                                      background: 'var(--color-accent)',
-                                      color: 'var(--color-bg)',
-                                    }}
+                                    style={{ fontSize: '14px', fontWeight: '600', color: 'var(--color-accent-700)' }}
                                   >
                                     {T(v.pd?.saveText)}
                                   </span>
                                 </>
                               ) : null}{' '}
                             </div>{' '}
-                            <div
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '8px',
-                                fontSize: '14px',
-                                fontWeight: '600',
-                              }}
-                            >
-                              <span style={{ width: '10px', height: '10px', background: v.pd?.availDot }}></span>
-                              {T(v.pd?.availText)}
-                              <span style={{ fontWeight: '400', color: 'var(--color-neutral-700)' }}>
-                                {T(v.pd?.availNote)}
-                              </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px' }}>
+                              <span
+                                style={{ width: '8px', height: '8px', flex: 'none', background: v.pd?.availDot }}
+                              ></span>
+                              <span style={{ fontWeight: '600' }}>{T(v.pd?.availText)}</span>
+                              <span style={{ color: 'var(--color-neutral-700)' }}>{T(v.pd?.availNote)}</span>
                             </div>{' '}
                             {v.pd?.canBuy ? (
                               <>
                                 {' '}
-                                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'stretch' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                                   {' '}
-                                  <div
-                                    style={{ display: 'flex', border: '2px solid var(--color-text)', height: '52px' }}
-                                  >
+                                  <div style={{ display: 'flex', gap: '10px' }}>
                                     {' '}
-                                    <button
-                                      onClick={v.pd?.onDec}
-                                      disabled={v.pd?.decDisabled}
-                                      aria-label={'Decrease quantity'}
-                                      style={{
-                                        width: '48px',
-                                        border: '0',
-                                        background: 'transparent',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        cursor: 'pointer',
-                                        color: 'var(--color-text)',
-                                        opacity: v.pd?.decOp,
-                                      }}
-                                    >
-                                      <svg
-                                        width={'16'}
-                                        height={'16'}
-                                        viewBox={'0 0 24 24'}
-                                        fill={'none'}
-                                        stroke={'currentColor'}
-                                        strokeWidth={'2.5'}
-                                        strokeLinecap={'round'}
-                                      >
-                                        <path d={'M5 12h14'}></path>
-                                      </svg>
-                                    </button>{' '}
                                     <div
                                       style={{
-                                        width: '44px',
                                         display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        fontWeight: '800',
-                                        fontSize: '17px',
-                                        borderLeft: '1px solid var(--color-divider)',
-                                        borderRight: '1px solid var(--color-divider)',
+                                        border: '1px solid var(--color-text)',
+                                        height: '48px',
+                                        flex: 'none',
                                       }}
                                     >
-                                      {T(v.pd?.qty)}
+                                      {' '}
+                                      <button
+                                        onClick={v.pd?.onDec}
+                                        disabled={v.pd?.decDisabled}
+                                        aria-label={'Decrease quantity'}
+                                        style={{
+                                          width: '44px',
+                                          border: '0',
+                                          background: 'transparent',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          cursor: 'pointer',
+                                          color: 'var(--color-text)',
+                                          opacity: v.pd?.decOp,
+                                        }}
+                                      >
+                                        <svg
+                                          width={'14'}
+                                          height={'14'}
+                                          viewBox={'0 0 24 24'}
+                                          fill={'none'}
+                                          stroke={'currentColor'}
+                                          strokeWidth={'2'}
+                                          strokeLinecap={'round'}
+                                          strokeLinejoin={'round'}
+                                        >
+                                          <path d={'M5 12h14'}></path>
+                                        </svg>
+                                      </button>{' '}
+                                      <div
+                                        style={{
+                                          width: '36px',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          fontWeight: '600',
+                                          fontSize: '16px',
+                                        }}
+                                      >
+                                        {T(v.pd?.qty)}
+                                      </div>{' '}
+                                      <button
+                                        onClick={v.pd?.onInc}
+                                        disabled={v.pd?.incDisabled}
+                                        aria-label={'Increase quantity'}
+                                        style={{
+                                          width: '44px',
+                                          border: '0',
+                                          background: 'transparent',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          cursor: 'pointer',
+                                          color: 'var(--color-text)',
+                                          opacity: v.pd?.incOp,
+                                        }}
+                                      >
+                                        <svg
+                                          width={'14'}
+                                          height={'14'}
+                                          viewBox={'0 0 24 24'}
+                                          fill={'none'}
+                                          stroke={'currentColor'}
+                                          strokeWidth={'2'}
+                                          strokeLinecap={'round'}
+                                          strokeLinejoin={'round'}
+                                        >
+                                          <path d={'M5 12h14M12 5v14'}></path>
+                                        </svg>
+                                      </button>{' '}
                                     </div>{' '}
                                     <button
-                                      onClick={v.pd?.onInc}
-                                      disabled={v.pd?.incDisabled}
-                                      aria-label={'Increase quantity'}
+                                      onClick={v.pd?.onAdd}
+                                      className="btn btn-primary"
+                                      style={{
+                                        flex: '1',
+                                        minWidth: '0',
+                                        height: '48px',
+                                        padding: '0 20px',
+                                        fontSize: '15px',
+                                        fontWeight: '600',
+                                      }}
+                                    >
+                                      {'Add to cart'}
+                                    </button>{' '}
+                                  </div>{' '}
+                                  <div style={{ display: 'flex', gap: '10px' }}>
+                                    {' '}
+                                    <button
+                                      onClick={v.pd?.onBuyNow}
+                                      className="btn sq5p3"
+                                      style={{
+                                        flex: '1',
+                                        height: '48px',
+                                        padding: '0 20px',
+                                        fontSize: '15px',
+                                        fontWeight: '600',
+                                        border: '1px solid var(--color-text)',
+                                        background: 'transparent',
+                                        color: 'var(--color-text)',
+                                      }}
+                                    >
+                                      {'Buy now'}
+                                    </button>{' '}
+                                    <button
+                                      onClick={v.pd?.onWish}
+                                      aria-label={v.pd?.wishLabel}
+                                      aria-pressed={v.pd?.wished}
+                                      className="sq5p4"
                                       style={{
                                         width: '48px',
-                                        border: '0',
+                                        height: '48px',
+                                        flex: 'none',
+                                        border: '1px solid var(--color-divider)',
                                         background: 'transparent',
                                         display: 'flex',
                                         alignItems: 'center',
                                         justifyContent: 'center',
                                         cursor: 'pointer',
-                                        color: 'var(--color-text)',
-                                        opacity: v.pd?.incOp,
+                                        color: v.pd?.heartColor,
                                       }}
                                     >
                                       <svg
-                                        width={'16'}
-                                        height={'16'}
+                                        width={'20'}
+                                        height={'20'}
                                         viewBox={'0 0 24 24'}
-                                        fill={'none'}
+                                        fill={v.pd?.heartFill}
                                         stroke={'currentColor'}
-                                        strokeWidth={'2.5'}
+                                        strokeWidth={'1.8'}
                                         strokeLinecap={'round'}
+                                        strokeLinejoin={'round'}
                                       >
-                                        <path d={'M5 12h14M12 5v14'}></path>
+                                        <path
+                                          d={
+                                            'M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z'
+                                          }
+                                        ></path>
                                       </svg>
                                     </button>{' '}
                                   </div>{' '}
-                                  <button
-                                    onClick={v.pd?.onAdd}
-                                    className="btn btn-primary"
-                                    style={{
-                                      flex: '1',
-                                      minWidth: '180px',
-                                      height: '52px',
-                                      justifyContent: 'space-between',
-                                      padding: '0 18px',
-                                      fontSize: '15px',
-                                      letterSpacing: '.04em',
-                                    }}
-                                  >
-                                    {'ADD TO CART '}
-                                    <svg
-                                      width={'18'}
-                                      height={'18'}
-                                      viewBox={'0 0 24 24'}
-                                      fill={'none'}
-                                      stroke={'currentColor'}
-                                      strokeWidth={'2.5'}
-                                      strokeLinecap={'round'}
-                                    >
-                                      <path d={'M5 12h14M12 5v14'}></path>
-                                    </svg>
-                                  </button>{' '}
-                                </div>{' '}
-                                <div style={{ display: 'flex', gap: '10px' }}>
-                                  {' '}
-                                  <button
-                                    onClick={v.pd?.onBuyNow}
-                                    className="btn sqp2"
-                                    style={{
-                                      flex: '1',
-                                      height: '52px',
-                                      justifyContent: 'space-between',
-                                      padding: '0 18px',
-                                      fontSize: '15px',
-                                      letterSpacing: '.04em',
-                                      background: 'var(--color-text)',
-                                      color: 'var(--color-bg)',
-                                    }}
-                                  >
-                                    {'BUY NOW '}
-                                    <svg
-                                      width={'18'}
-                                      height={'18'}
-                                      viewBox={'0 0 24 24'}
-                                      fill={'none'}
-                                      stroke={'currentColor'}
-                                      strokeWidth={'2.5'}
-                                      strokeLinecap={'round'}
-                                      strokeLinejoin={'round'}
-                                    >
-                                      <path d={'M5 12h14M12 5l7 7-7 7'}></path>
-                                    </svg>
-                                  </button>{' '}
-                                  <button
-                                    onClick={v.pd?.onWish}
-                                    aria-label={'Toggle wishlist'}
-                                    style={{
-                                      width: '52px',
-                                      height: '52px',
-                                      border: '2px solid var(--color-text)',
-                                      background: 'transparent',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      cursor: 'pointer',
-                                      color: v.pd?.heartColor,
-                                    }}
-                                  >
-                                    <svg
-                                      width={'20'}
-                                      height={'20'}
-                                      viewBox={'0 0 24 24'}
-                                      fill={v.pd?.heartFill}
-                                      stroke={'currentColor'}
-                                      strokeWidth={'2'}
-                                      strokeLinecap={'round'}
-                                      strokeLinejoin={'round'}
-                                    >
-                                      <path
-                                        d={
-                                          'M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z'
-                                        }
-                                      ></path>
-                                    </svg>
-                                  </button>{' '}
                                 </div>{' '}
                               </>
                             ) : null}{' '}
                             {v.pd?.cantBuy ? (
                               <>
                                 {' '}
-                                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
                                   {' '}
                                   <div
                                     style={{
                                       flex: '1',
                                       minWidth: '200px',
-                                      padding: '14px 16px',
+                                      padding: '13px 16px',
                                       background: 'var(--color-surface)',
                                       fontSize: '14px',
-                                      fontWeight: '600',
                                     }}
                                   >
                                     {T(v.pd?.cantBuyText)}
                                   </div>{' '}
                                   <button
                                     onClick={v.pd?.onWish}
-                                    className="btn btn-secondary"
-                                    style={{ minHeight: '52px', gap: '8px', color: v.pd?.heartColor }}
+                                    className="btn sq5p3"
+                                    style={{
+                                      minHeight: '48px',
+                                      gap: '8px',
+                                      padding: '0 16px',
+                                      fontSize: '15px',
+                                      fontWeight: '600',
+                                      border: '1px solid var(--color-text)',
+                                      background: 'transparent',
+                                      color: v.pd?.heartColor,
+                                    }}
                                   >
                                     <svg
                                       width={'18'}
@@ -2805,7 +3298,7 @@ export default class StoreApp extends React.Component {
                                       viewBox={'0 0 24 24'}
                                       fill={v.pd?.heartFill}
                                       stroke={'currentColor'}
-                                      strokeWidth={'2'}
+                                      strokeWidth={'1.8'}
                                       strokeLinecap={'round'}
                                       strokeLinejoin={'round'}
                                     >
@@ -2820,27 +3313,24 @@ export default class StoreApp extends React.Component {
                                 </div>{' '}
                               </>
                             ) : null}{' '}
-                            <div>
+                            <div
+                              style={{
+                                borderTop: '1px solid var(--color-divider)',
+                                paddingTop: '18px',
+                                marginTop: '4px',
+                              }}
+                            >
                               {' '}
-                              <div
-                                style={{
-                                  fontSize: '12px',
-                                  fontWeight: '800',
-                                  letterSpacing: '.1em',
-                                  textTransform: 'uppercase',
-                                  padding: '14px 0 8px',
-                                  borderTop: '2px solid var(--color-text)',
-                                }}
-                              >
-                                {'Product details'}
-                              </div>{' '}
+                              <h2 style={{ fontSize: '17px', fontWeight: '600', margin: '0', marginBottom: '6px' }}>
+                                {'Details'}
+                              </h2>{' '}
                               {L(v.pd?.details).map((d, $index) => (
                                 <React.Fragment key={$index}>
                                   {' '}
                                   <div
                                     style={{
                                       display: 'grid',
-                                      gridTemplateColumns: 'minmax(110px,38%) 1fr',
+                                      gridTemplateColumns: 'minmax(110px,38%) minmax(0,1fr)',
                                       gap: '12px',
                                       padding: '9px 0',
                                       borderBottom: '1px solid var(--color-divider)',
@@ -2853,55 +3343,49 @@ export default class StoreApp extends React.Component {
                                 </React.Fragment>
                               ))}{' '}
                             </div>{' '}
-                            <div>
+                            <div style={{ paddingTop: '6px' }}>
                               {' '}
-                              <div
-                                style={{
-                                  fontSize: '12px',
-                                  fontWeight: '800',
-                                  letterSpacing: '.1em',
-                                  textTransform: 'uppercase',
-                                  padding: '14px 0 8px',
-                                  borderTop: '2px solid var(--color-text)',
-                                }}
-                              >
+                              <h2 style={{ fontSize: '17px', fontWeight: '600', margin: '0', marginBottom: '8px' }}>
                                 {'Description'}
-                              </div>{' '}
+                              </h2>{' '}
                               <p style={{ margin: '0', fontSize: '15px', lineHeight: '1.65', textWrap: 'pretty' }}>
                                 {T(v.pd?.description)}
                               </p>{' '}
                             </div>{' '}
                             <div
                               style={{
-                                background: 'var(--color-surface)',
-                                padding: '18px 20px',
                                 display: 'flex',
-                                gap: '14px',
+                                gap: '12px',
                                 alignItems: 'flex-start',
+                                borderTop: '1px solid var(--color-divider)',
+                                paddingTop: '16px',
                               }}
                             >
                               {' '}
-                              <svg
-                                width={'22'}
-                                height={'22'}
-                                viewBox={'0 0 24 24'}
-                                fill={'none'}
-                                stroke={'currentColor'}
-                                strokeWidth={'2'}
-                                strokeLinecap={'round'}
-                                strokeLinejoin={'round'}
-                                style={{ flex: 'none', color: 'var(--color-accent)', marginTop: '2px' }}
-                              >
-                                <path d={'M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2'}></path>
-                                <path d={'M15 18H9'}></path>
-                                <path
-                                  d={'M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14'}
-                                ></path>
-                                <circle cx={'17'} cy={'18'} r={'2'}></circle>
-                                <circle cx={'7'} cy={'18'} r={'2'}></circle>
-                              </svg>{' '}
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '14px' }}>
-                                <strong style={{ fontWeight: '800' }}>{'Shipping throughout the Philippines'}</strong>
+                              <span style={{ flex: 'none', marginTop: '1px' }}>
+                                <svg
+                                  width={'20'}
+                                  height={'20'}
+                                  viewBox={'0 0 24 24'}
+                                  fill={'none'}
+                                  stroke={'currentColor'}
+                                  strokeWidth={'1.8'}
+                                  strokeLinecap={'round'}
+                                  strokeLinejoin={'round'}
+                                >
+                                  <path d={'M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2'}></path>
+                                  <path d={'M15 18H9'}></path>
+                                  <path
+                                    d={
+                                      'M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14'
+                                    }
+                                  ></path>
+                                  <circle cx={'17'} cy={'18'} r={'2'}></circle>
+                                  <circle cx={'7'} cy={'18'} r={'2'}></circle>
+                                </svg>
+                              </span>{' '}
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', fontSize: '14px' }}>
+                                <span style={{ fontWeight: '600' }}>{'Shipping throughout the Philippines'}</span>
                                 <span style={{ color: 'var(--color-neutral-800)' }}>{T(v.pd?.shipText)}</span>
                               </div>{' '}
                             </div>{' '}
@@ -2910,37 +3394,36 @@ export default class StoreApp extends React.Component {
                         {v.hasRelated ? (
                           <>
                             {' '}
-                            <div style={{ marginTop: 'clamp(48px,6vw,88px)' }}>
+                            <div
+                              style={{
+                                marginTop: 'clamp(48px,6vw,80px)',
+                                borderTop: '1px solid var(--color-divider)',
+                                paddingTop: 'clamp(32px,4vw,48px)',
+                              }}
+                            >
                               {' '}
-                              <div
+                              <h2
                                 style={{
-                                  borderBottom: '2px solid var(--color-text)',
-                                  paddingBottom: '12px',
-                                  marginBottom: '20px',
+                                  fontSize: 'clamp(20px,2vw,24px)',
+                                  fontWeight: '700',
+                                  letterSpacing: '-.01em',
+                                  margin: '0 0 20px',
                                 }}
                               >
-                                <h2
-                                  style={{
-                                    fontSize: 'clamp(24px,2.8vw,34px)',
-                                    margin: '0',
-                                    textTransform: 'uppercase',
-                                  }}
-                                >
-                                  {'More in '}
-                                  {T(v.pd?.catLabel)}
-                                </h2>
-                              </div>{' '}
+                                {'More in '}
+                                {T(v.pd?.catLabel)}
+                              </h2>{' '}
                               <div
                                 style={{
                                   display: 'grid',
-                                  gridTemplateColumns: `repeat(auto-fill,minmax(${S(v.cardMin)},1fr))`,
-                                  gap: v.gridGap,
+                                  gridTemplateColumns: v.gridCols,
+                                  gap: `${S(v.gridGapV)} ${S(v.gridGap)}`,
                                 }}
                               >
                                 {' '}
                                 {L(v.related).map((p, $index) => (
                                   <React.Fragment key={$index}>
-                                    <ProductCard p={p} />
+                                    <ProductCardV3 p={p} dense={v.denseCards} />
                                   </React.Fragment>
                                 ))}{' '}
                               </div>{' '}
@@ -2956,17 +3439,16 @@ export default class StoreApp extends React.Component {
               {v.isCart ? (
                 <>
                   {' '}
-                  <div
-                    data-screen-label={'Cart'}
-                    style={{ maxWidth: '1320px', margin: '0 auto', padding: '28px clamp(16px,4vw,40px) 80px' }}
-                  >
+                  <div data-screen-label={'Cart'} style={{ maxWidth: '1280px', margin: '0 auto', padding: v.pagePad }}>
                     {' '}
                     <h1
                       style={{
-                        fontSize: 'clamp(32px,4.4vw,56px)',
-                        margin: '0 0 16px',
-                        textTransform: 'uppercase',
-                        letterSpacing: '-.025em',
+                        fontSize: 'clamp(26px,3vw,32px)',
+                        fontWeight: '700',
+                        letterSpacing: '-.015em',
+                        lineHeight: '1.15',
+                        margin: '0',
+                        marginBottom: '20px',
                       }}
                     >
                       {'Your cart'}
@@ -2976,8 +3458,8 @@ export default class StoreApp extends React.Component {
                         {' '}
                         <div
                           style={{
-                            borderTop: '2px solid var(--color-text)',
-                            padding: '40px 0',
+                            borderTop: '1px solid var(--color-divider)',
+                            padding: '32px 0',
                             display: 'flex',
                             flexDirection: 'column',
                             gap: '14px',
@@ -2985,18 +3467,23 @@ export default class StoreApp extends React.Component {
                           }}
                         >
                           {' '}
-                          <div style={{ fontWeight: '800', fontSize: '22px', textTransform: 'uppercase' }}>
-                            {'Your cart is empty'}
-                          </div>{' '}
-                          <p style={{ margin: '0', color: 'var(--color-neutral-700)' }}>
-                            {'Your next quest starts in the shop.'}
+                          <p style={{ margin: '0', fontSize: '17px', fontWeight: '600' }}>
+                            {'Your cart is empty.'}
                           </p>{' '}
                           <a
                             href={'#/shop'}
                             className="btn btn-primary"
-                            style={{ padding: '14px 18px', minWidth: '200px', justifyContent: 'space-between' }}
+                            style={{
+                              padding: '14px 20px',
+                              fontSize: '15px',
+                              fontWeight: '600',
+                              gap: '24px',
+                              justifyContent: 'space-between',
+                              whiteSpace: 'nowrap',
+                              flex: 'none',
+                            }}
                           >
-                            {'SHOP NOW '}
+                            {'Shop now '}
                             <span>{'→'}</span>
                           </a>{' '}
                         </div>{' '}
@@ -3014,7 +3501,7 @@ export default class StoreApp extends React.Component {
                           }}
                         >
                           {' '}
-                          <div style={{ borderTop: '2px solid var(--color-text)' }}>
+                          <div style={{ borderTop: '1px solid var(--color-divider)' }}>
                             {' '}
                             {L(v.cartLines).map((l, $index) => (
                               <React.Fragment key={$index}>
@@ -3032,38 +3519,32 @@ export default class StoreApp extends React.Component {
                                   {' '}
                                   <a
                                     href={l?.href}
+                                    aria-label={l?.name}
                                     style={{
                                       position: 'relative',
                                       display: 'block',
                                       aspectRatio: '1/1',
-                                      border: '1px solid var(--color-divider)',
+                                      background: 'var(--color-surface)',
                                     }}
                                   >
-                                    <ProductImage
+                                    <ProductImageV3
                                       image={l?.image}
                                       compact={true}
                                       __hostStyle={{ position: 'absolute', inset: '0' }}
                                     />
                                   </a>{' '}
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '0' }}>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '0' }}>
                                     {' '}
-                                    <div
-                                      style={{
-                                        fontSize: '11px',
-                                        letterSpacing: '.1em',
-                                        textTransform: 'uppercase',
-                                        color: 'var(--color-accent-700)',
-                                        fontWeight: '600',
-                                      }}
-                                    >
+                                    <div style={{ fontSize: '13px', color: 'var(--color-neutral-700)' }}>
                                       {T(l?.catLabel)}
                                     </div>{' '}
                                     <a
                                       href={l?.href}
+                                      className="sq5p0"
                                       style={{
-                                        fontWeight: '800',
-                                        fontSize: '16px',
-                                        lineHeight: '1.25',
+                                        fontWeight: '600',
+                                        fontSize: '15px',
+                                        lineHeight: '1.3',
                                         color: 'var(--color-text)',
                                         textDecoration: 'none',
                                       }}
@@ -3072,12 +3553,12 @@ export default class StoreApp extends React.Component {
                                     </a>{' '}
                                     {l?.hasMeta ? (
                                       <>
-                                        <div style={{ fontSize: '12px', color: 'var(--color-neutral-700)' }}>
+                                        <div style={{ fontSize: '13px', color: 'var(--color-neutral-700)' }}>
                                           {T(l?.meta)}
                                         </div>
                                       </>
                                     ) : null}{' '}
-                                    <div style={{ fontSize: '13px' }}>
+                                    <div style={{ fontSize: '13px', color: 'var(--color-neutral-800)' }}>
                                       {T(l?.unitText)}
                                       {' each'}
                                     </div>{' '}
@@ -3085,9 +3566,9 @@ export default class StoreApp extends React.Component {
                                       style={{
                                         display: 'flex',
                                         alignItems: 'center',
-                                        gap: '12px',
+                                        gap: '16px',
                                         flexWrap: 'wrap',
-                                        marginTop: '4px',
+                                        marginTop: '6px',
                                       }}
                                     >
                                       {' '}
@@ -3101,7 +3582,7 @@ export default class StoreApp extends React.Component {
                                         {' '}
                                         <button
                                           onClick={l?.onDec}
-                                          aria-label={'Decrease'}
+                                          aria-label={'Decrease quantity'}
                                           style={{
                                             width: '40px',
                                             border: '0',
@@ -3120,26 +3601,27 @@ export default class StoreApp extends React.Component {
                                             viewBox={'0 0 24 24'}
                                             fill={'none'}
                                             stroke={'currentColor'}
-                                            strokeWidth={'2.5'}
+                                            strokeWidth={'2'}
                                             strokeLinecap={'round'}
+                                            strokeLinejoin={'round'}
                                           >
                                             <path d={'M5 12h14'}></path>
                                           </svg>
                                         </button>{' '}
                                         <div
                                           style={{
-                                            width: '36px',
+                                            width: '32px',
                                             display: 'flex',
                                             alignItems: 'center',
                                             justifyContent: 'center',
-                                            fontWeight: '800',
+                                            fontWeight: '600',
                                           }}
                                         >
                                           {T(l?.qty)}
                                         </div>{' '}
                                         <button
                                           onClick={l?.onInc}
-                                          aria-label={'Increase'}
+                                          aria-label={'Increase quantity'}
                                           disabled={l?.incDisabled}
                                           style={{
                                             width: '40px',
@@ -3159,8 +3641,9 @@ export default class StoreApp extends React.Component {
                                             viewBox={'0 0 24 24'}
                                             fill={'none'}
                                             stroke={'currentColor'}
-                                            strokeWidth={'2.5'}
+                                            strokeWidth={'2'}
                                             strokeLinecap={'round'}
+                                            strokeLinejoin={'round'}
                                           >
                                             <path d={'M5 12h14M12 5v14'}></path>
                                           </svg>
@@ -3168,15 +3651,25 @@ export default class StoreApp extends React.Component {
                                       </div>{' '}
                                       <button
                                         onClick={l?.onRemove}
-                                        className="btn btn-ghost"
-                                        style={{ fontSize: '13px', minHeight: '40px' }}
+                                        className="sq5p0"
+                                        style={{
+                                          padding: '10px 0',
+                                          border: '0',
+                                          background: 'transparent',
+                                          font: 'inherit',
+                                          fontSize: '14px',
+                                          color: 'var(--color-neutral-800)',
+                                          textDecoration: 'underline',
+                                          textUnderlineOffset: '3px',
+                                          cursor: 'pointer',
+                                        }}
                                       >
                                         {'Remove'}
                                       </button>{' '}
                                     </div>{' '}
                                     {l?.hasNote ? (
                                       <>
-                                        <div style={{ fontSize: '12px', color: 'var(--color-neutral-700)' }}>
+                                        <div style={{ fontSize: '13px', color: 'var(--color-neutral-700)' }}>
                                           {T(l?.note)}
                                         </div>
                                       </>
@@ -3184,8 +3677,8 @@ export default class StoreApp extends React.Component {
                                   </div>{' '}
                                   <div
                                     style={{
-                                      fontWeight: '800',
-                                      fontSize: '17px',
+                                      fontWeight: '700',
+                                      fontSize: '16px',
                                       whiteSpace: 'nowrap',
                                       gridColumn: v.lineTotalCol,
                                       textAlign: v.lineTotalAlign,
@@ -3198,10 +3691,19 @@ export default class StoreApp extends React.Component {
                             ))}{' '}
                             <a
                               href={'#/shop'}
-                              className="btn btn-ghost"
-                              style={{ marginTop: '16px', fontSize: '14px' }}
+                              className="sq5p0"
+                              style={{
+                                display: 'inline-block',
+                                marginTop: '18px',
+                                fontSize: '15px',
+                                fontWeight: '600',
+                                color: 'var(--color-text)',
+                                textDecoration: 'underline',
+                                textUnderlineOffset: '4px',
+                                textDecorationThickness: '1px',
+                              }}
                             >
-                              {'← Continue shopping'}
+                              {'Continue shopping'}
                             </a>{' '}
                           </div>{' '}
                           <div
@@ -3212,28 +3714,27 @@ export default class StoreApp extends React.Component {
                               flexDirection: 'column',
                               gap: '12px',
                               position: v.summaryPos,
-                              top: '150px',
+                              top: '96px',
                             }}
                           >
                             {' '}
+                            <h2 style={{ fontSize: '17px', fontWeight: '600', margin: '0', marginBottom: '4px' }}>
+                              {'Order summary'}
+                            </h2>{' '}
                             <div
                               style={{
-                                fontWeight: '800',
-                                fontSize: '18px',
-                                textTransform: 'uppercase',
-                                borderBottom: '2px solid var(--color-text)',
-                                paddingBottom: '10px',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                gap: '12px',
+                                fontSize: '15px',
                               }}
                             >
-                              {'Order summary'}
-                            </div>{' '}
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px' }}>
                               <span>
                                 {'Subtotal ('}
                                 {T(v.cartCount)}
                                 {' items)'}
                               </span>
-                              <strong>{T(v.subtotalText)}</strong>
+                              <span style={{ fontWeight: '600' }}>{T(v.subtotalText)}</span>
                             </div>{' '}
                             <div
                               style={{
@@ -3244,9 +3745,9 @@ export default class StoreApp extends React.Component {
                               }}
                             >
                               <span>{'Estimated shipping'}</span>
-                              <strong>{T(v.shipText)}</strong>
+                              <span style={{ fontWeight: '600' }}>{T(v.shipText)}</span>
                             </div>{' '}
-                            <div style={{ fontSize: '12px', color: 'var(--color-neutral-700)', marginTop: '-6px' }}>
+                            <div style={{ fontSize: '13px', color: 'var(--color-neutral-700)', marginTop: '-6px' }}>
                               {T(v.shipNote)}
                             </div>{' '}
                             <div
@@ -3254,27 +3755,29 @@ export default class StoreApp extends React.Component {
                                 display: 'flex',
                                 justifyContent: 'space-between',
                                 alignItems: 'baseline',
-                                borderTop: '2px solid var(--color-text)',
-                                paddingTop: '12px',
+                                borderTop: '1px solid var(--color-divider)',
+                                paddingTop: '14px',
                               }}
                             >
-                              <span style={{ fontWeight: '800', textTransform: 'uppercase' }}>{'Total'}</span>
-                              <span style={{ fontSize: '26px', fontWeight: '800' }}>{T(v.totalText)}</span>
+                              <span style={{ fontWeight: '600', fontSize: '16px' }}>{'Total'}</span>
+                              <span style={{ fontSize: '22px', fontWeight: '700' }}>{T(v.totalText)}</span>
                             </div>{' '}
                             <a
                               href={'#/checkout'}
                               className="btn btn-primary"
                               style={{
-                                justifyContent: 'space-between',
-                                padding: '16px 18px',
+                                padding: '15px 20px',
                                 fontSize: '15px',
-                                letterSpacing: '.04em',
+                                fontWeight: '600',
+                                gap: '24px',
+                                justifyContent: 'space-between',
+                                whiteSpace: 'nowrap',
                               }}
                             >
-                              {'PROCEED TO CHECKOUT '}
+                              {'Checkout '}
                               <span>{'→'}</span>
                             </a>{' '}
-                            <div style={{ fontSize: '12px', color: 'var(--color-neutral-700)' }}>
+                            <div style={{ fontSize: '13px', color: 'var(--color-neutral-700)' }}>
                               {'Items are reserved for you when you place your order.'}
                             </div>{' '}
                           </div>{' '}
@@ -3290,10 +3793,10 @@ export default class StoreApp extends React.Component {
                   {' '}
                   <div
                     data-screen-label={'Checkout'}
-                    style={{ maxWidth: '1320px', margin: '0 auto', padding: '28px clamp(16px,4vw,40px) 80px' }}
+                    style={{ maxWidth: '1280px', margin: '0 auto', padding: v.pagePad }}
                   >
                     {' '}
-                    <div style={{ fontSize: '12px', color: 'var(--color-neutral-700)', display: 'flex', gap: '6px' }}>
+                    <div style={{ fontSize: '13px', color: 'var(--color-neutral-700)', display: 'flex', gap: '6px' }}>
                       <a href={'#/cart'} style={{ color: 'inherit' }}>
                         {'Cart'}
                       </a>
@@ -3302,10 +3805,12 @@ export default class StoreApp extends React.Component {
                     </div>{' '}
                     <h1
                       style={{
-                        fontSize: 'clamp(32px,4.4vw,56px)',
-                        margin: '8px 0 16px',
-                        textTransform: 'uppercase',
-                        letterSpacing: '-.025em',
+                        fontSize: 'clamp(26px,3vw,32px)',
+                        fontWeight: '700',
+                        letterSpacing: '-.015em',
+                        lineHeight: '1.15',
+                        margin: '0',
+                        margin: '8px 0 20px',
                       }}
                     >
                       {'Checkout'}
@@ -3315,19 +3820,32 @@ export default class StoreApp extends React.Component {
                         {' '}
                         <div
                           style={{
-                            borderTop: '2px solid var(--color-text)',
-                            padding: '40px 0',
+                            borderTop: '1px solid var(--color-divider)',
+                            padding: '32px 0',
                             display: 'flex',
                             flexDirection: 'column',
                             gap: '14px',
                             alignItems: 'flex-start',
                           }}
                         >
-                          <div style={{ fontWeight: '800', fontSize: '22px', textTransform: 'uppercase' }}>
-                            {'Nothing to check out'}
-                          </div>
-                          <a href={'#/shop'} className="btn btn-primary">
-                            {'Go to shop'}
+                          <p style={{ margin: '0', fontSize: '17px', fontWeight: '600' }}>
+                            {'There’s nothing in your cart to check out.'}
+                          </p>
+                          <a
+                            href={'#/shop'}
+                            className="btn btn-primary"
+                            style={{
+                              padding: '14px 20px',
+                              fontSize: '15px',
+                              fontWeight: '600',
+                              gap: '24px',
+                              justifyContent: 'space-between',
+                              whiteSpace: 'nowrap',
+                              flex: 'none',
+                            }}
+                          >
+                            {'Shop now '}
+                            <span>{'→'}</span>
                           </a>
                         </div>{' '}
                       </>
@@ -3344,30 +3862,18 @@ export default class StoreApp extends React.Component {
                           }}
                         >
                           {' '}
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '32px', minWidth: '0' }}>
                             {' '}
                             {L(v.coSections).map((s, $index) => (
                               <React.Fragment key={$index}>
                                 {' '}
-                                <section style={{ borderTop: '2px solid var(--color-text)', paddingTop: '14px' }}>
+                                <section style={{ borderTop: '1px solid var(--color-divider)', paddingTop: '18px' }}>
                                   {' '}
-                                  <div
-                                    style={{
-                                      display: 'flex',
-                                      gap: '10px',
-                                      alignItems: 'baseline',
-                                      marginBottom: '14px',
-                                    }}
+                                  <h2
+                                    style={{ fontSize: '17px', fontWeight: '600', margin: '0', marginBottom: '14px' }}
                                   >
-                                    <span
-                                      style={{ fontSize: '12px', fontWeight: '800', color: 'var(--color-accent-700)' }}
-                                    >
-                                      {T(s?.n)}
-                                    </span>
-                                    <span style={{ fontWeight: '800', fontSize: '18px', textTransform: 'uppercase' }}>
-                                      {T(s?.title)}
-                                    </span>
-                                  </div>{' '}
+                                    {T(s?.title)}
+                                  </h2>{' '}
                                   <div
                                     style={{
                                       display: 'grid',
@@ -3438,18 +3944,11 @@ export default class StoreApp extends React.Component {
                                 </section>{' '}
                               </React.Fragment>
                             ))}{' '}
-                            <section style={{ borderTop: '2px solid var(--color-text)', paddingTop: '14px' }}>
+                            <section style={{ borderTop: '1px solid var(--color-divider)', paddingTop: '18px' }}>
                               {' '}
-                              <div
-                                style={{ display: 'flex', gap: '10px', alignItems: 'baseline', marginBottom: '14px' }}
-                              >
-                                <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--color-accent-700)' }}>
-                                  {'04'}
-                                </span>
-                                <span style={{ fontWeight: '800', fontSize: '18px', textTransform: 'uppercase' }}>
-                                  {'Payment method'}
-                                </span>
-                              </div>{' '}
+                              <h2 style={{ fontSize: '17px', fontWeight: '600', margin: '0', marginBottom: '14px' }}>
+                                {'Payment method'}
+                              </h2>{' '}
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                 {' '}
                                 {L(v.payMethods).map((m, $index) => (
@@ -3482,7 +3981,7 @@ export default class StoreApp extends React.Component {
                                         }}
                                       />{' '}
                                       <div style={{ flex: '1', display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                                        <span style={{ fontWeight: '800', fontSize: '15px' }}>{T(m?.label)}</span>
+                                        <span style={{ fontWeight: '600', fontSize: '15px' }}>{T(m?.label)}</span>
                                         <span style={{ fontSize: '13px', color: 'var(--color-neutral-700)' }}>
                                           {T(m?.desc)}
                                         </span>
@@ -3491,12 +3990,8 @@ export default class StoreApp extends React.Component {
                                         <>
                                           <span
                                             style={{
-                                              padding: '3px 8px',
-                                              fontSize: '11px',
-                                              fontWeight: '800',
-                                              letterSpacing: '.06em',
-                                              background: 'var(--color-neutral-200)',
-                                              color: 'var(--color-neutral-800)',
+                                              fontSize: '12px',
+                                              color: 'var(--color-neutral-700)',
                                               whiteSpace: 'nowrap',
                                             }}
                                           >
@@ -3508,26 +4003,22 @@ export default class StoreApp extends React.Component {
                                   </React.Fragment>
                                 ))}{' '}
                               </div>{' '}
-                              <div
+                              <p
                                 style={{
-                                  marginTop: '14px',
-                                  padding: '16px 18px',
-                                  background: 'var(--color-text)',
-                                  color: 'var(--color-bg)',
+                                  margin: '14px 0 0',
+                                  padding: '14px 16px',
+                                  background: 'var(--color-surface)',
                                   fontSize: '14px',
                                   lineHeight: '1.6',
                                 }}
                               >
-                                {' '}
-                                <strong style={{ color: 'var(--sq-gold)', letterSpacing: '.06em' }}>
-                                  {'NO PAYMENT IS TAKEN ON THIS PAGE.'}
-                                </strong>
+                                <strong style={{ fontWeight: '600' }}>{'No payment is taken on this page.'}</strong>
                                 {
-                                  " After you place your order we'll send payment instructions and your confirmed shipping fee. Your order stays "
+                                  ' After you place your order we’ll send payment instructions and your confirmed shipping fee. Your order stays '
                                 }
-                                <strong>{'Payment pending'}</strong>
-                                {' until we verify your payment. '}
-                              </div>{' '}
+                                <strong style={{ fontWeight: '600' }}>{'Payment pending'}</strong>
+                                {' until we verify your payment.'}
+                              </p>{' '}
                             </section>{' '}
                           </div>{' '}
                           <div
@@ -3538,42 +4029,30 @@ export default class StoreApp extends React.Component {
                               flexDirection: 'column',
                               gap: '12px',
                               position: v.summaryPos,
-                              top: '150px',
+                              top: '96px',
                             }}
                           >
                             {' '}
-                            <div
-                              style={{
-                                fontWeight: '800',
-                                fontSize: '18px',
-                                textTransform: 'uppercase',
-                                borderBottom: '2px solid var(--color-text)',
-                                paddingBottom: '10px',
-                              }}
-                            >
+                            <h2 style={{ fontSize: '17px', fontWeight: '600', margin: '0', marginBottom: '4px' }}>
                               {'Your order'}
-                            </div>{' '}
+                            </h2>{' '}
                             {L(v.cartLines).map((l, $index) => (
                               <React.Fragment key={$index}>
                                 {' '}
                                 <div
                                   style={{
                                     display: 'grid',
-                                    gridTemplateColumns: '56px 1fr auto',
+                                    gridTemplateColumns: '56px minmax(0,1fr) auto',
                                     gap: '12px',
                                     alignItems: 'center',
-                                    fontSize: '13px',
+                                    fontSize: '14px',
                                   }}
                                 >
                                   {' '}
                                   <div
-                                    style={{
-                                      position: 'relative',
-                                      aspectRatio: '1/1',
-                                      border: '1px solid var(--color-divider)',
-                                    }}
+                                    style={{ position: 'relative', aspectRatio: '1/1', background: 'var(--color-bg)' }}
                                   >
-                                    <ProductImage
+                                    <ProductImageV3
                                       image={l?.image}
                                       compact={true}
                                       __hostStyle={{ position: 'absolute', inset: '0' }}
@@ -3581,12 +4060,12 @@ export default class StoreApp extends React.Component {
                                   </div>{' '}
                                   <div style={{ minWidth: '0' }}>
                                     <div style={{ fontWeight: '600', lineHeight: '1.3' }}>{T(l?.name)}</div>
-                                    <div style={{ color: 'var(--color-neutral-700)' }}>
+                                    <div style={{ fontSize: '13px', color: 'var(--color-neutral-700)' }}>
                                       {'Qty '}
                                       {T(l?.qty)}
                                     </div>
                                   </div>{' '}
-                                  <strong style={{ whiteSpace: 'nowrap' }}>{T(l?.lineText)}</strong>{' '}
+                                  <span style={{ whiteSpace: 'nowrap', fontWeight: '600' }}>{T(l?.lineText)}</span>{' '}
                                 </div>{' '}
                               </React.Fragment>
                             ))}{' '}
@@ -3594,19 +4073,27 @@ export default class StoreApp extends React.Component {
                               style={{
                                 display: 'flex',
                                 justifyContent: 'space-between',
+                                gap: '12px',
                                 fontSize: '15px',
                                 borderTop: '1px solid var(--color-divider)',
                                 paddingTop: '12px',
                               }}
                             >
                               <span>{'Subtotal'}</span>
-                              <strong>{T(v.subtotalText)}</strong>
+                              <span style={{ fontWeight: '600' }}>{T(v.subtotalText)}</span>
                             </div>{' '}
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px' }}>
+                            <div
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                gap: '12px',
+                                fontSize: '15px',
+                              }}
+                            >
                               <span>{'Shipping'}</span>
-                              <strong>{T(v.shipText)}</strong>
+                              <span style={{ fontWeight: '600' }}>{T(v.shipText)}</span>
                             </div>{' '}
-                            <div style={{ fontSize: '12px', color: 'var(--color-neutral-700)', marginTop: '-6px' }}>
+                            <div style={{ fontSize: '13px', color: 'var(--color-neutral-700)', marginTop: '-6px' }}>
                               {T(v.shipNote)}
                             </div>{' '}
                             <div
@@ -3614,12 +4101,12 @@ export default class StoreApp extends React.Component {
                                 display: 'flex',
                                 justifyContent: 'space-between',
                                 alignItems: 'baseline',
-                                borderTop: '2px solid var(--color-text)',
-                                paddingTop: '12px',
+                                borderTop: '1px solid var(--color-divider)',
+                                paddingTop: '14px',
                               }}
                             >
-                              <span style={{ fontWeight: '800', textTransform: 'uppercase' }}>{'Total'}</span>
-                              <span style={{ fontSize: '26px', fontWeight: '800' }}>{T(v.totalText)}</span>
+                              <span style={{ fontWeight: '600', fontSize: '16px' }}>{'Total'}</span>
+                              <span style={{ fontSize: '22px', fontWeight: '700' }}>{T(v.totalText)}</span>
                             </div>{' '}
                             {v.hasCoErr ? (
                               <>
@@ -3642,16 +4129,18 @@ export default class StoreApp extends React.Component {
                               disabled={v.placing}
                               className="btn btn-primary"
                               style={{
-                                justifyContent: 'space-between',
-                                padding: '17px 18px',
+                                padding: '16px 20px',
                                 fontSize: '15px',
-                                letterSpacing: '.04em',
+                                fontWeight: '600',
+                                gap: '24px',
+                                justifyContent: 'space-between',
+                                whiteSpace: 'nowrap',
                               }}
                             >
                               {T(v.placeLabel)} <span>{'→'}</span>
                             </button>{' '}
-                            <div style={{ fontSize: '12px', color: 'var(--color-neutral-700)' }}>
-                              {'By placing your order, your items are reserved for 24 hours while we wait for payment.'}
+                            <div style={{ fontSize: '13px', color: 'var(--color-neutral-700)' }}>
+                              {'Placing your order reserves your items for 24 hours while we wait for payment.'}
                             </div>{' '}
                           </div>{' '}
                         </div>{' '}
@@ -3667,9 +4156,9 @@ export default class StoreApp extends React.Component {
                   <div
                     data-screen-label={'Order confirmation'}
                     style={{
-                      maxWidth: '920px',
+                      maxWidth: '880px',
                       margin: '0 auto',
-                      padding: '36px clamp(16px,4vw,40px) 80px',
+                      padding: v.pagePad,
                       display: 'flex',
                       flexDirection: 'column',
                       gap: '24px',
@@ -3685,53 +4174,74 @@ export default class StoreApp extends React.Component {
                     ) : null}{' '}
                     {v.oNotFound ? (
                       <>
-                        <h1 style={{ textTransform: 'uppercase' }}>{'Order not found'}</h1>
-                        <a href={'#/shop'} className="btn btn-primary">
-                          {'Back to shop'}
-                        </a>
+                        <div
+                          style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '12px',
+                            alignItems: 'flex-start',
+                            padding: '32px 0',
+                          }}
+                        >
+                          <h1
+                            style={{
+                              fontSize: 'clamp(26px,3vw,32px)',
+                              fontWeight: '700',
+                              letterSpacing: '-.015em',
+                              lineHeight: '1.15',
+                              margin: '0',
+                            }}
+                          >
+                            {'Order not found'}
+                          </h1>
+                          <p style={{ margin: '0', fontSize: '15px', color: 'var(--color-neutral-700)' }}>
+                            {'Check the link from your confirmation, or contact us with your order number.'}
+                          </p>
+                          <a
+                            href={'#/shop'}
+                            className="sq5p0"
+                            style={{
+                              fontSize: '15px',
+                              fontWeight: '600',
+                              color: 'var(--color-text)',
+                              textDecoration: 'underline',
+                              textUnderlineOffset: '4px',
+                              textDecorationThickness: '1px',
+                            }}
+                          >
+                            {'Browse all products'}
+                          </a>
+                        </div>
                       </>
                     ) : null}{' '}
                     {v.hasO ? (
                       <>
                         {' '}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                           {' '}
-                          <div
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '12px',
-                              fontSize: '12px',
-                              fontWeight: '800',
-                              letterSpacing: '.14em',
-                              color: 'var(--color-accent-700)',
-                            }}
-                          >
-                            <span style={{ display: 'flex', gap: '3px' }}>
-                              <span style={{ width: '18px', height: '4px', background: 'var(--sq-gold)' }}></span>
-                              <span style={{ width: '18px', height: '4px', background: 'var(--color-accent)' }}></span>
-                            </span>
-                            {'ORDER RECEIVED'}
+                          <div style={{ fontSize: '14px', fontWeight: '600', color: 'var(--color-accent-700)' }}>
+                            {'Order received'}
                           </div>{' '}
                           <h1
                             style={{
-                              fontSize: 'clamp(34px,5vw,60px)',
+                              fontSize: 'clamp(26px,3vw,32px)',
+                              fontWeight: '700',
+                              letterSpacing: '-.015em',
+                              lineHeight: '1.15',
                               margin: '0',
-                              textTransform: 'uppercase',
-                              letterSpacing: '-.025em',
                             }}
                           >
                             {'Thanks, '}
                             {T(v.od?.firstName)}
                             {'.'}
                           </h1>{' '}
-                          <p style={{ margin: '0', fontSize: '16px', maxWidth: '640px' }}>
-                            {"We've received order "}
-                            <strong>{T(v.od?.id)}</strong>
-                            {" and reserved your items. We'll contact you at "}
-                            <strong>{T(v.od?.email)}</strong>
+                          <p style={{ margin: '0', fontSize: '16px', lineHeight: '1.55', maxWidth: '640px' }}>
+                            {'We’ve received order '}
+                            <strong style={{ fontWeight: '600' }}>{T(v.od?.id)}</strong>
+                            {' and reserved your items. We’ll contact you at '}
+                            <strong style={{ fontWeight: '600' }}>{T(v.od?.email)}</strong>
                             {' and '}
-                            <strong>{T(v.od?.mobile)}</strong>
+                            <strong style={{ fontWeight: '600' }}>{T(v.od?.mobile)}</strong>
                             {'.'}
                           </p>{' '}
                         </div>{' '}
@@ -3746,37 +4256,19 @@ export default class StoreApp extends React.Component {
                         >
                           {' '}
                           <div style={{ background: 'var(--color-bg)', padding: '14px 16px' }}>
-                            <div
-                              style={{
-                                fontSize: '11px',
-                                letterSpacing: '.1em',
-                                color: 'var(--color-neutral-700)',
-                                fontWeight: '600',
-                              }}
-                            >
-                              {'ORDER ID'}
-                            </div>
-                            <div style={{ fontWeight: '800', fontSize: '17px' }}>{T(v.od?.id)}</div>
+                            <div style={{ fontSize: '13px', color: 'var(--color-neutral-700)' }}>{'Order ID'}</div>
+                            <div style={{ fontWeight: '600', fontSize: '16px' }}>{T(v.od?.id)}</div>
                           </div>{' '}
                           <div style={{ background: 'var(--color-bg)', padding: '14px 16px' }}>
-                            <div
-                              style={{
-                                fontSize: '11px',
-                                letterSpacing: '.1em',
-                                color: 'var(--color-neutral-700)',
-                                fontWeight: '600',
-                              }}
-                            >
-                              {'ORDER STATUS'}
-                            </div>
+                            <div style={{ fontSize: '13px', color: 'var(--color-neutral-700)' }}>{'Order status'}</div>
                             <div>
                               <span
                                 style={{
                                   display: 'inline-block',
                                   marginTop: '4px',
-                                  padding: '3px 8px',
+                                  padding: '2px 8px',
                                   fontSize: '12px',
-                                  fontWeight: '800',
+                                  fontWeight: '600',
                                   background: v.od?.statusBg,
                                   color: v.od?.statusFg,
                                 }}
@@ -3786,53 +4278,32 @@ export default class StoreApp extends React.Component {
                             </div>
                           </div>{' '}
                           <div style={{ background: 'var(--color-bg)', padding: '14px 16px' }}>
-                            <div
-                              style={{
-                                fontSize: '11px',
-                                letterSpacing: '.1em',
-                                color: 'var(--color-neutral-700)',
-                                fontWeight: '600',
-                              }}
-                            >
-                              {'PAYMENT'}
-                            </div>
-                            <div style={{ fontWeight: '800', fontSize: '15px' }}>
+                            <div style={{ fontSize: '13px', color: 'var(--color-neutral-700)' }}>{'Payment'}</div>
+                            <div style={{ fontWeight: '600', fontSize: '15px' }}>
                               {T(v.od?.payLabel)}
                               {' · '}
                               {T(v.od?.payStatus)}
                             </div>
                           </div>{' '}
                           <div style={{ background: 'var(--color-bg)', padding: '14px 16px' }}>
-                            <div
-                              style={{
-                                fontSize: '11px',
-                                letterSpacing: '.1em',
-                                color: 'var(--color-neutral-700)',
-                                fontWeight: '600',
-                              }}
-                            >
-                              {'TOTAL'}
-                            </div>
-                            <div style={{ fontWeight: '800', fontSize: '17px' }}>{T(v.od?.totalText)}</div>
+                            <div style={{ fontSize: '13px', color: 'var(--color-neutral-700)' }}>{'Total'}</div>
+                            <div style={{ fontWeight: '600', fontSize: '16px' }}>{T(v.od?.totalText)}</div>
                           </div>{' '}
                         </div>{' '}
                         <div
                           style={{
-                            background: 'var(--color-text)',
-                            color: 'var(--color-bg)',
-                            padding: '22px 24px',
+                            background: 'var(--color-surface)',
+                            padding: '18px 20px',
                             display: 'flex',
                             flexDirection: 'column',
-                            gap: '8px',
+                            gap: '6px',
                           }}
                         >
                           {' '}
-                          <div style={{ fontWeight: '800', letterSpacing: '.06em', color: 'var(--sq-gold)' }}>
-                            {'PAYMENT NOT YET RECEIVED'}
-                          </div>{' '}
+                          <div style={{ fontWeight: '600', fontSize: '15px' }}>{'Payment not yet received'}</div>{' '}
                           <div style={{ fontSize: '15px', lineHeight: '1.6' }}>{T(v.od?.instructions)}</div>{' '}
                         </div>{' '}
-                        <div style={{ borderTop: '2px solid var(--color-text)' }}>
+                        <div style={{ borderTop: '1px solid var(--color-divider)' }}>
                           {' '}
                           {L(v.od?.items).map((i, $index) => (
                             <React.Fragment key={$index}>
@@ -3848,13 +4319,13 @@ export default class StoreApp extends React.Component {
                                 }}
                               >
                                 <span>
-                                  <strong>{T(i?.name)}</strong>{' '}
+                                  <span style={{ fontWeight: '600' }}>{T(i?.name)}</span>{' '}
                                   <span style={{ color: 'var(--color-neutral-700)' }}>
                                     {'× '}
                                     {T(i?.quantity)}
                                   </span>
                                 </span>
-                                <strong style={{ whiteSpace: 'nowrap' }}>{T(i?.lineText)}</strong>
+                                <span style={{ whiteSpace: 'nowrap', fontWeight: '600' }}>{T(i?.lineText)}</span>
                               </div>{' '}
                             </React.Fragment>
                           ))}{' '}
@@ -3867,7 +4338,7 @@ export default class StoreApp extends React.Component {
                             }}
                           >
                             <span>{'Subtotal'}</span>
-                            <strong>{T(v.od?.subtotalText)}</strong>
+                            <span style={{ fontWeight: '600' }}>{T(v.od?.subtotalText)}</span>
                           </div>{' '}
                           <div
                             style={{
@@ -3878,7 +4349,7 @@ export default class StoreApp extends React.Component {
                             }}
                           >
                             <span>{'Shipping'}</span>
-                            <strong>{T(v.od?.shipText)}</strong>
+                            <span style={{ fontWeight: '600' }}>{T(v.od?.shipText)}</span>
                           </div>{' '}
                         </div>{' '}
                         <div
@@ -3890,46 +4361,49 @@ export default class StoreApp extends React.Component {
                         >
                           {' '}
                           <div>
-                            <div
-                              style={{
-                                fontSize: '12px',
-                                fontWeight: '800',
-                                letterSpacing: '.1em',
-                                marginBottom: '6px',
-                              }}
-                            >
-                              {'SHIP TO'}
-                            </div>
+                            <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '6px' }}>{'Ship to'}</div>
                             <div style={{ fontSize: '14px', lineHeight: '1.6' }}>{T(v.od?.shipTo)}</div>
                           </div>{' '}
                           {v.od?.hasNotes ? (
                             <>
                               <div>
-                                <div
-                                  style={{
-                                    fontSize: '12px',
-                                    fontWeight: '800',
-                                    letterSpacing: '.1em',
-                                    marginBottom: '6px',
-                                  }}
-                                >
-                                  {'NOTES'}
+                                <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '6px' }}>
+                                  {'Notes'}
                                 </div>
                                 <div style={{ fontSize: '14px', lineHeight: '1.6' }}>{T(v.od?.notes)}</div>
                               </div>
                             </>
                           ) : null}{' '}
                         </div>{' '}
-                        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', alignItems: 'center' }}>
                           <a
                             href={'#/shop'}
                             className="btn btn-primary"
-                            style={{ padding: '14px 18px', minWidth: '220px', justifyContent: 'space-between' }}
+                            style={{
+                              padding: '14px 20px',
+                              fontSize: '15px',
+                              fontWeight: '600',
+                              gap: '24px',
+                              justifyContent: 'space-between',
+                              whiteSpace: 'nowrap',
+                              flex: 'none',
+                            }}
                           >
-                            {'CONTINUE SHOPPING '}
+                            {'Continue shopping '}
                             <span>{'→'}</span>
                           </a>
-                          <a href={'#/contact'} className="btn btn-secondary" style={{ padding: '14px 18px' }}>
+                          <a
+                            href={'#/contact'}
+                            className="sq5p0"
+                            style={{
+                              fontSize: '15px',
+                              fontWeight: '600',
+                              color: 'var(--color-text)',
+                              textDecoration: 'underline',
+                              textUnderlineOffset: '4px',
+                              textDecorationThickness: '1px',
+                            }}
+                          >
                             {'Questions? Contact us'}
                           </a>
                         </div>{' '}
@@ -3944,59 +4418,68 @@ export default class StoreApp extends React.Component {
                   {' '}
                   <div
                     data-screen-label={'Wishlist'}
-                    style={{ maxWidth: '1320px', margin: '0 auto', padding: '28px clamp(16px,4vw,40px) 80px' }}
+                    style={{ maxWidth: '1280px', margin: '0 auto', padding: v.pagePad }}
                   >
                     {' '}
                     <h1
                       style={{
-                        fontSize: 'clamp(32px,4.4vw,56px)',
-                        margin: '0 0 16px',
-                        textTransform: 'uppercase',
-                        letterSpacing: '-.025em',
+                        fontSize: 'clamp(26px,3vw,32px)',
+                        fontWeight: '700',
+                        letterSpacing: '-.015em',
+                        lineHeight: '1.15',
+                        margin: '0',
+                        marginBottom: '20px',
                       }}
                     >
                       {'Wishlist'}
                     </h1>{' '}
-                    <div style={{ borderTop: '2px solid var(--color-text)', paddingTop: '20px' }}>
-                      {' '}
-                      {v.wishEmpty ? (
-                        <>
-                          {' '}
-                          <div
+                    {v.wishEmpty ? (
+                      <>
+                        {' '}
+                        <div
+                          style={{
+                            borderTop: '1px solid var(--color-divider)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '10px',
+                            alignItems: 'flex-start',
+                            padding: '32px 0',
+                          }}
+                        >
+                          <p style={{ margin: '0', fontSize: '17px', fontWeight: '600' }}>{'Nothing saved yet.'}</p>
+                          <p style={{ margin: '0', fontSize: '15px', color: 'var(--color-neutral-700)' }}>
+                            {'Tap the heart on any product to save it here.'}
+                          </p>
+                          <a
+                            href={'#/shop'}
+                            className="sq5p0"
                             style={{
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: '14px',
-                              alignItems: 'flex-start',
-                              padding: '20px 0',
+                              fontSize: '15px',
+                              fontWeight: '600',
+                              color: 'var(--color-text)',
+                              textDecoration: 'underline',
+                              textUnderlineOffset: '4px',
+                              textDecorationThickness: '1px',
                             }}
                           >
-                            <div style={{ fontWeight: '800', fontSize: '22px', textTransform: 'uppercase' }}>
-                              {'Nothing saved yet'}
-                            </div>
-                            <p style={{ margin: '0', color: 'var(--color-neutral-700)' }}>
-                              {'Tap the heart on any product to keep track of it here.'}
-                            </p>
-                            <a href={'#/shop'} className="btn btn-primary">
-                              {'Browse the shop'}
-                            </a>
-                          </div>{' '}
-                        </>
-                      ) : null}{' '}
-                      <div
-                        style={{
-                          display: 'grid',
-                          gridTemplateColumns: `repeat(auto-fill,minmax(${S(v.cardMin)},1fr))`,
-                          gap: v.gridGap,
-                        }}
-                      >
-                        {' '}
-                        {L(v.wishItems).map((p, $index) => (
-                          <React.Fragment key={$index}>
-                            <ProductCard p={p} />
-                          </React.Fragment>
-                        ))}{' '}
-                      </div>{' '}
+                            {'Browse all products'}
+                          </a>
+                        </div>{' '}
+                      </>
+                    ) : null}{' '}
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: v.gridCols,
+                        gap: `${S(v.gridGapV)} ${S(v.gridGap)}`,
+                      }}
+                    >
+                      {' '}
+                      {L(v.wishItems).map((p, $index) => (
+                        <React.Fragment key={$index}>
+                          <ProductCardV3 p={p} dense={v.denseCards} />
+                        </React.Fragment>
+                      ))}{' '}
                     </div>{' '}
                   </div>
                 </>
@@ -4008,50 +4491,42 @@ export default class StoreApp extends React.Component {
                   <div
                     data-screen-label={'Account'}
                     style={{
-                      maxWidth: '920px',
+                      maxWidth: '880px',
                       margin: '0 auto',
-                      padding: '28px clamp(16px,4vw,40px) 80px',
+                      padding: v.pagePad,
                       display: 'flex',
                       flexDirection: 'column',
-                      gap: '20px',
+                      gap: '14px',
                     }}
                   >
                     {' '}
                     <h1
                       style={{
-                        fontSize: 'clamp(32px,4.4vw,56px)',
+                        fontSize: 'clamp(26px,3vw,32px)',
+                        fontWeight: '700',
+                        letterSpacing: '-.015em',
+                        lineHeight: '1.15',
                         margin: '0',
-                        textTransform: 'uppercase',
-                        letterSpacing: '-.025em',
                       }}
                     >
                       {'Account'}
                     </h1>{' '}
-                    <div
-                      style={{
-                        border: '2px solid var(--color-text)',
-                        padding: '24px',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '8px',
-                      }}
-                    >
-                      {' '}
-                      <div style={{ fontWeight: '800', fontSize: '18px', textTransform: 'uppercase' }}>
-                        {'Customer accounts are coming soon'}
-                      </div>{' '}
-                      <p style={{ margin: '0', color: 'var(--color-neutral-800)' }}>
-                        {'For now, you can check out as a guest. Orders placed on this device are listed below.'}
-                      </p>{' '}
-                    </div>{' '}
-                    <div style={{ borderTop: '2px solid var(--color-text)' }}>
+                    <p style={{ margin: '0', fontSize: '15px', lineHeight: '1.55', color: 'var(--color-neutral-800)' }}>
+                      {
+                        'You don’t need an account to order. Check out as a guest, and orders placed on this device appear below.'
+                      }
+                    </p>{' '}
+                    <h2 style={{ fontSize: '17px', fontWeight: '600', margin: '0', marginTop: '14px' }}>
+                      {'Your orders'}
+                    </h2>{' '}
+                    <div style={{ borderTop: '1px solid var(--color-divider)' }}>
                       {' '}
                       {L(v.myOrders).map((o, $index) => (
                         <React.Fragment key={$index}>
                           {' '}
                           <a
                             href={o?.href}
-                            className="sqp3"
+                            className="sq5p3"
                             style={{
                               display: 'flex',
                               justifyContent: 'space-between',
@@ -4064,26 +4539,33 @@ export default class StoreApp extends React.Component {
                               fontSize: '14px',
                             }}
                           >
-                            <strong>{T(o?.id)}</strong>
+                            <span style={{ fontWeight: '600' }}>{T(o?.id)}</span>
                             <span style={{ color: 'var(--color-neutral-700)' }}>{T(o?.date)}</span>
                             <span
                               style={{
                                 padding: '2px 8px',
                                 fontSize: '12px',
-                                fontWeight: '800',
+                                fontWeight: '600',
                                 background: o?.bg,
                                 color: o?.fg,
                               }}
                             >
                               {T(o?.status)}
                             </span>
-                            <strong>{T(o?.total)}</strong>
+                            <span style={{ fontWeight: '600' }}>{T(o?.total)}</span>
                           </a>{' '}
                         </React.Fragment>
                       ))}{' '}
                       {v.noMyOrders ? (
                         <>
-                          <p style={{ padding: '14px 0', margin: '0', color: 'var(--color-neutral-700)' }}>
+                          <p
+                            style={{
+                              padding: '14px 0',
+                              margin: '0',
+                              fontSize: '15px',
+                              color: 'var(--color-neutral-700)',
+                            }}
+                          >
                             {'No orders yet.'}
                           </p>
                         </>
@@ -4096,126 +4578,93 @@ export default class StoreApp extends React.Component {
               {v.isAbout ? (
                 <>
                   {' '}
-                  <div data-screen-label={'About'}>
+                  <div data-screen-label={'About'} style={{ maxWidth: '1280px', margin: '0 auto', padding: v.pagePad }}>
                     {' '}
-                    <section
-                      style={{
-                        position: 'relative',
-                        background: 'var(--color-text)',
-                        minHeight: 'clamp(280px,38vw,520px)',
-                        display: 'flex',
-                        alignItems: 'flex-end',
-                        overflow: 'hidden',
-                      }}
-                    >
+                    <div style={{ maxWidth: '680px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
                       {' '}
-                      <img
-                        src={'/assets/store-mockup.png'}
-                        alt={'SIDE QUEST store interior'}
+                      <h1
                         style={{
-                          position: 'absolute',
-                          inset: '0',
-                          width: '100%',
-                          height: '100%',
-                          objectFit: 'cover',
-                          opacity: '.55',
-                        }}
-                      />{' '}
-                      <div
-                        style={{
-                          position: 'relative',
-                          maxWidth: '1320px',
-                          width: '100%',
-                          margin: '0 auto',
-                          padding: 'clamp(32px,5vw,64px) clamp(16px,4vw,40px)',
-                          color: 'var(--color-bg)',
+                          fontSize: 'clamp(26px,3vw,32px)',
+                          fontWeight: '700',
+                          letterSpacing: '-.015em',
+                          lineHeight: '1.15',
+                          margin: '0',
                         }}
                       >
-                        {' '}
-                        <div
-                          style={{
-                            fontSize: '12px',
-                            fontWeight: '800',
-                            letterSpacing: '.16em',
-                            color: 'var(--sq-gold)',
-                            marginBottom: '10px',
-                          }}
-                        >
-                          {'ABOUT SIDE QUEST'}
-                        </div>{' '}
-                        <h1
-                          style={{
-                            fontSize: 'clamp(40px,6vw,84px)',
-                            lineHeight: '.95',
-                            margin: '0',
-                            textTransform: 'uppercase',
-                            letterSpacing: '-.03em',
-                            color: 'var(--color-bg)',
-                          }}
-                        >
-                          {'Good finds.'}
-                          <br />
-                          {'Better people.'}
-                        </h1>{' '}
-                      </div>{' '}
-                    </section>{' '}
-                    <section
-                      style={{
-                        maxWidth: '1320px',
-                        margin: '0 auto',
-                        padding: 'clamp(40px,6vw,80px) clamp(16px,4vw,40px)',
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,360px),1fr))',
-                        gap: 'clamp(24px,5vw,72px)',
-                      }}
-                    >
-                      {' '}
+                        {'About SIDE QUEST'}
+                      </h1>{' '}
+                      <p style={{ margin: '0', fontSize: '18px', lineHeight: '1.55', textWrap: 'pretty' }}>
+                        {
+                          'SIDE QUEST is an independent online shop for Pokémon TCG and hobby collectors in the Philippines.'
+                        }
+                      </p>{' '}
                       <p
                         style={{
                           margin: '0',
-                          fontSize: 'clamp(20px,2.2vw,28px)',
-                          fontWeight: '600',
-                          lineHeight: '1.35',
+                          fontSize: '16px',
+                          lineHeight: '1.65',
+                          color: 'var(--color-neutral-800)',
                           textWrap: 'pretty',
                         }}
                       >
                         {
-                          'SIDE QUEST is a hobby and collectibles shop for Pokémon TCG players and collectors in the Philippines, with room for every other hobby worth chasing.'
+                          'We sell Pokémon singles, graded cards and sealed product, along with accessories, plush and other collectibles. Single cards and graded slabs are listed as individual items, so the card you order is the card you receive.'
+                        }
+                      </p>{' '}
+                      <p
+                        style={{
+                          margin: '0',
+                          fontSize: '16px',
+                          lineHeight: '1.65',
+                          color: 'var(--color-neutral-800)',
+                          textWrap: 'pretty',
+                        }}
+                      >
+                        {
+                          'We also buy and trade. If you’re looking for a specific card, or have cards you’d like to sell or trade, get in touch.'
                         }
                       </p>{' '}
                       <div
                         style={{
                           display: 'flex',
-                          flexDirection: 'column',
-                          gap: '14px',
-                          fontSize: '16px',
-                          lineHeight: '1.65',
+                          gap: '20px',
+                          flexWrap: 'wrap',
+                          alignItems: 'center',
+                          marginTop: '8px',
                         }}
                       >
-                        {' '}
-                        <p style={{ margin: '0' }}>
-                          {
-                            'We carry singles, graded slabs, sealed product, accessories, plush and collectibles. Every card listing is a real item in our inventory. The card in the photos is the card you get.'
-                          }
-                        </p>{' '}
-                        <p style={{ margin: '0' }}>
-                          {"Collect, trade, or just talk hobbies with us. That's the side quest."}
-                        </p>{' '}
-                        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '6px' }}>
-                          <a
-                            href={'#/shop'}
-                            className="btn btn-primary"
-                            style={{ padding: '14px 18px', minWidth: '200px', justifyContent: 'space-between' }}
-                          >
-                            {'SHOP NOW '}
-                            <span>{'→'}</span>
-                          </a>
-                          <a href={'#/contact'} className="btn btn-secondary" style={{ padding: '14px 18px' }}>
-                            {'Buy • Sell • Trade'}
-                          </a>
-                        </div>{' '}
+                        <a
+                          href={'#/shop'}
+                          className="btn btn-primary"
+                          style={{
+                            padding: '14px 20px',
+                            fontSize: '15px',
+                            fontWeight: '600',
+                            gap: '24px',
+                            justifyContent: 'space-between',
+                            whiteSpace: 'nowrap',
+                            flex: 'none',
+                          }}
+                        >
+                          {'Shop now '}
+                          <span>{'→'}</span>
+                        </a>
+                        <a
+                          href={'#/contact'}
+                          className="sq5p0"
+                          style={{
+                            fontSize: '15px',
+                            fontWeight: '600',
+                            color: 'var(--color-text)',
+                            textDecoration: 'underline',
+                            textUnderlineOffset: '4px',
+                            textDecorationThickness: '1px',
+                          }}
+                        >
+                          {'Contact us'}
+                        </a>
                       </div>{' '}
-                    </section>{' '}
+                    </div>{' '}
                   </div>
                 </>
               ) : null}
@@ -4225,57 +4674,82 @@ export default class StoreApp extends React.Component {
                   {' '}
                   <div
                     data-screen-label={'Contact'}
-                    style={{ maxWidth: '1320px', margin: '0 auto', padding: '28px clamp(16px,4vw,40px) 80px' }}
+                    style={{ maxWidth: '1280px', margin: '0 auto', padding: v.pagePad }}
                   >
                     {' '}
                     <h1
                       style={{
-                        fontSize: 'clamp(32px,4.4vw,56px)',
-                        margin: '0 0 16px',
-                        textTransform: 'uppercase',
-                        letterSpacing: '-.025em',
+                        fontSize: 'clamp(26px,3vw,32px)',
+                        fontWeight: '700',
+                        letterSpacing: '-.015em',
+                        lineHeight: '1.15',
+                        margin: '0',
+                        marginBottom: '20px',
                       }}
                     >
-                      {'Contact'}
+                      {'Contact us'}
                     </h1>{' '}
                     <div
                       style={{
                         display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,380px),1fr))',
-                        gap: 'clamp(24px,5vw,72px)',
-                        borderTop: '2px solid var(--color-text)',
+                        gridTemplateColumns: v.contactCols,
+                        gap: 'clamp(24px,5vw,64px)',
+                        borderTop: '1px solid var(--color-divider)',
                         paddingTop: '24px',
                         alignItems: 'start',
                       }}
                     >
                       {' '}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '22px', maxWidth: '440px' }}>
                         {' '}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          <div style={{ fontWeight: '800', textTransform: 'uppercase' }}>{'Order questions'}</div>
-                          <div style={{ color: 'var(--color-neutral-800)' }}>
-                            {"Include your order ID (e.g. SQ-ORD-1001) and we'll get back to you."}
-                          </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <h2 style={{ fontSize: '17px', fontWeight: '600', margin: '0' }}>{'Order questions'}</h2>
+                          <p
+                            style={{
+                              margin: '0',
+                              fontSize: '15px',
+                              lineHeight: '1.55',
+                              color: 'var(--color-neutral-800)',
+                            }}
+                          >
+                            {'Include your order ID (for example SQ-ORD-1001) and we’ll get back to you.'}
+                          </p>
                         </div>{' '}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          <div style={{ fontWeight: '800', textTransform: 'uppercase' }}>{'Buy • Sell • Trade'}</div>
-                          <div style={{ color: 'var(--color-neutral-800)' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <h2 style={{ fontSize: '17px', fontWeight: '600', margin: '0' }}>
+                            {'Buying, selling or trading'}
+                          </h2>
+                          <p
+                            style={{
+                              margin: '0',
+                              fontSize: '15px',
+                              lineHeight: '1.55',
+                              color: 'var(--color-neutral-800)',
+                            }}
+                          >
                             {
-                              "Selling a collection or looking for a specific card? Tell us what you have or what you're hunting for."
+                              'Selling a collection or looking for a specific card? Tell us what you have or what you’re looking for.'
                             }
-                          </div>
+                          </p>
                         </div>{' '}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          <div style={{ fontWeight: '800', textTransform: 'uppercase' }}>{'Product inquiries'}</div>
-                          <div style={{ color: 'var(--color-neutral-800)' }}>
-                            {'Ask for extra photos, condition details or grading info on any listing.'}
-                          </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <h2 style={{ fontSize: '17px', fontWeight: '600', margin: '0' }}>{'Product questions'}</h2>
+                          <p
+                            style={{
+                              margin: '0',
+                              fontSize: '15px',
+                              lineHeight: '1.55',
+                              color: 'var(--color-neutral-800)',
+                            }}
+                          >
+                            {'Ask for extra photos, condition details or grading information on any listing.'}
+                          </p>
                         </div>{' '}
                       </div>{' '}
                       <div
                         style={{
                           background: 'var(--color-surface)',
-                          padding: 'clamp(20px,3vw,32px)',
+                          padding: 'clamp(20px,3vw,28px)',
                           display: 'flex',
                           flexDirection: 'column',
                           gap: '14px',
@@ -4293,14 +4767,23 @@ export default class StoreApp extends React.Component {
                                 alignItems: 'flex-start',
                               }}
                             >
-                              <div style={{ fontWeight: '800', fontSize: '20px', textTransform: 'uppercase' }}>
-                                {'Message saved'}
-                              </div>
-                              <p style={{ margin: '0' }}>
-                                {'Thanks! Your message was sent to the SIDE QUEST inbox. We’ll reply by email.'}
+                              <h2 style={{ fontSize: '17px', fontWeight: '600', margin: '0' }}>{'Message sent'}</h2>
+                              <p style={{ margin: '0', fontSize: '15px' }}>
+                                {'Thanks. Your message was sent to the SIDE QUEST inbox, and we’ll reply by email.'}
                               </p>
-                              <button onClick={v.ctReset} className="btn btn-secondary">
-                                {'Send another'}
+                              <button
+                                onClick={v.ctReset}
+                                className="btn sq5p5"
+                                style={{
+                                  padding: '12px 18px',
+                                  fontSize: '15px',
+                                  fontWeight: '600',
+                                  border: '1px solid var(--color-text)',
+                                  background: 'transparent',
+                                  color: 'var(--color-text)',
+                                }}
+                              >
+                                {'Send another message'}
                               </button>
                             </div>{' '}
                           </>
@@ -4373,9 +4856,17 @@ export default class StoreApp extends React.Component {
                             <button
                               onClick={v.ctSubmit}
                               className="btn btn-primary"
-                              style={{ justifyContent: 'space-between', padding: '15px 18px', fontSize: '15px' }}
+                              style={{
+                                padding: '14px 20px',
+                                fontSize: '15px',
+                                fontWeight: '600',
+                                gap: '24px',
+                                justifyContent: 'space-between',
+                                whiteSpace: 'nowrap',
+                                flex: 'none',
+                              }}
                             >
-                              {'SEND MESSAGE '}
+                              {'Send message '}
                               <span>{'→'}</span>
                             </button>{' '}
                           </>
@@ -4392,9 +4883,9 @@ export default class StoreApp extends React.Component {
                   <div
                     data-screen-label={'Not found'}
                     style={{
-                      maxWidth: '1320px',
+                      maxWidth: '1280px',
                       margin: '0 auto',
-                      padding: '64px clamp(16px,4vw,40px) 96px',
+                      padding: v.pagePad404,
                       display: 'flex',
                       flexDirection: 'column',
                       gap: '14px',
@@ -4402,39 +4893,51 @@ export default class StoreApp extends React.Component {
                     }}
                   >
                     {' '}
-                    <div
-                      style={{
-                        fontSize: '12px',
-                        fontWeight: '800',
-                        letterSpacing: '.14em',
-                        color: 'var(--color-accent-700)',
-                      }}
-                    >
+                    <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--color-neutral-700)' }}>
                       {'404'}
                     </div>{' '}
                     <h1
                       style={{
-                        fontSize: 'clamp(34px,5vw,64px)',
+                        fontSize: 'clamp(26px,3vw,34px)',
+                        fontWeight: '700',
+                        letterSpacing: '-.015em',
                         margin: '0',
-                        textTransform: 'uppercase',
-                        letterSpacing: '-.025em',
                       }}
                     >
-                      {'This quest doesn’t exist'}
+                      {'Page not found'}
                     </h1>{' '}
                     <p style={{ margin: '0', fontSize: '16px', color: 'var(--color-neutral-800)' }}>
                       {'The page may have moved, or the link is incomplete.'}
                     </p>{' '}
-                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', alignItems: 'center' }}>
                       <a
                         href={'#/shop'}
                         className="btn btn-primary"
-                        style={{ padding: '14px 18px', minWidth: '200px', justifyContent: 'space-between' }}
+                        style={{
+                          padding: '14px 20px',
+                          fontSize: '15px',
+                          fontWeight: '600',
+                          gap: '24px',
+                          justifyContent: 'space-between',
+                          whiteSpace: 'nowrap',
+                          flex: 'none',
+                        }}
                       >
-                        {'SHOP ALL '}
+                        {'Shop all '}
                         <span>{'→'}</span>
                       </a>
-                      <a href={'#/'} className="btn btn-secondary" style={{ padding: '14px 18px' }}>
+                      <a
+                        href={'#/'}
+                        className="sq5p0"
+                        style={{
+                          fontSize: '15px',
+                          fontWeight: '600',
+                          color: 'var(--color-text)',
+                          textDecoration: 'underline',
+                          textUnderlineOffset: '4px',
+                          textDecorationThickness: '1px',
+                        }}
+                      >
                         {'Home'}
                       </a>
                     </div>{' '}
@@ -4443,34 +4946,42 @@ export default class StoreApp extends React.Component {
               ) : null}
             </main>
 
-            <footer style={{ borderTop: '2px solid var(--color-text)', paddingBottom: v.mainPadB }}>
+            <footer
+              style={{
+                borderTop: '1px solid var(--color-divider)',
+                background: 'var(--color-bg)',
+                paddingBottom: v.mainPadB,
+              }}
+            >
               {' '}
               <div
                 style={{
-                  maxWidth: '1320px',
+                  maxWidth: '1280px',
                   margin: '0 auto',
-                  padding: '48px clamp(16px,4vw,40px) 32px',
+                  padding: '40px clamp(16px,3vw,32px) 28px',
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,200px),1fr))',
-                  gap: '32px',
+                  gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,180px),1fr))',
+                  gap: '28px',
                 }}
               >
                 {' '}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', alignItems: 'flex-start' }}>
+                <div>
                   <img
                     src={'/assets/sidequest-logo.png'}
                     alt={'SIDE QUEST — Collect • Trade • Hobbies'}
-                    style={{ width: '180px', height: 'auto' }}
+                    style={{ width: '112px', height: 'auto', display: 'block' }}
                   />
                 </div>{' '}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '14px' }}>
                   {' '}
-                  <div style={{ fontSize: '12px', fontWeight: '800', letterSpacing: '.1em', marginBottom: '4px' }}>
-                    {'SHOP'}
-                  </div>{' '}
+                  <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '2px' }}>{'Shop'}</div>{' '}
                   {L(v.footShop).map((n, $index) => (
                     <React.Fragment key={$index}>
-                      <a href={n?.href} className="sqp1" style={{ color: 'var(--color-text)', textDecoration: 'none' }}>
+                      <a
+                        href={n?.href}
+                        className="sq5p0"
+                        style={{ color: 'var(--color-neutral-800)', textDecoration: 'none' }}
+                      >
                         {T(n?.label)}
                       </a>
                     </React.Fragment>
@@ -4478,52 +4989,52 @@ export default class StoreApp extends React.Component {
                 </div>{' '}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '14px' }}>
                   {' '}
-                  <div style={{ fontSize: '12px', fontWeight: '800', letterSpacing: '.1em', marginBottom: '4px' }}>
-                    {'SIDE QUEST'}
-                  </div>{' '}
-                  <a href={'#/about'} className="sqp1" style={{ color: 'var(--color-text)', textDecoration: 'none' }}>
+                  <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '2px' }}>{'SIDE QUEST'}</div>{' '}
+                  <a
+                    href={'#/about'}
+                    className="sq5p0"
+                    style={{ color: 'var(--color-neutral-800)', textDecoration: 'none' }}
+                  >
                     {'About'}
                   </a>{' '}
-                  <a href={'#/contact'} className="sqp1" style={{ color: 'var(--color-text)', textDecoration: 'none' }}>
+                  <a
+                    href={'#/contact'}
+                    className="sq5p0"
+                    style={{ color: 'var(--color-neutral-800)', textDecoration: 'none' }}
+                  >
                     {'Contact'}
                   </a>{' '}
                   <a
-                    href={'#/wishlist'}
-                    className="sqp1"
-                    style={{ color: 'var(--color-text)', textDecoration: 'none' }}
+                    href={'#/account'}
+                    className="sq5p0"
+                    style={{ color: 'var(--color-neutral-800)', textDecoration: 'none' }}
                   >
-                    {'Wishlist'}
-                  </a>{' '}
-                  <a href={'#/cart'} className="sqp1" style={{ color: 'var(--color-text)', textDecoration: 'none' }}>
-                    {'Cart'}
+                    {'Your orders'}
                   </a>{' '}
                 </div>{' '}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '14px' }}>
                   {' '}
-                  <div style={{ fontSize: '12px', fontWeight: '800', letterSpacing: '.1em', marginBottom: '4px' }}>
-                    {'PAYMENTS'}
-                  </div>{' '}
-                  <span>{'GCash · Bank transfer'}</span>{' '}
-                  <span style={{ color: 'var(--color-neutral-700)' }}>{'Online payments coming soon'}</span>{' '}
-                  <span style={{ color: 'var(--color-neutral-700)' }}>{'All prices in Philippine Peso (₱)'}</span>{' '}
+                  <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '2px' }}>{'Payments'}</div>{' '}
+                  <span style={{ color: 'var(--color-neutral-800)' }}>{'GCash · Bank transfer'}</span>{' '}
+                  <span style={{ color: 'var(--color-neutral-800)' }}>{'Prices in Philippine Peso (₱)'}</span>{' '}
                 </div>{' '}
               </div>{' '}
               <div style={{ borderTop: '1px solid var(--color-divider)' }}>
                 {' '}
                 <div
                   style={{
-                    maxWidth: '1320px',
+                    maxWidth: '1280px',
                     margin: '0 auto',
-                    padding: '14px clamp(16px,4vw,40px)',
+                    padding: '14px clamp(16px,3vw,32px)',
                     display: 'flex',
                     justifyContent: 'space-between',
                     gap: '12px',
                     flexWrap: 'wrap',
-                    fontSize: '12px',
+                    fontSize: '13px',
                     color: 'var(--color-neutral-700)',
                   }}
                 >
-                  <span>{'© 2026 SIDE QUEST. Collect • Trade • Hobbies.'}</span>
+                  <span>{'© 2026 SIDE QUEST'}</span>
                   <a href={'#/admin'} style={{ color: 'inherit' }}>
                     {'Store admin'}
                   </a>
@@ -4535,6 +5046,7 @@ export default class StoreApp extends React.Component {
               <>
                 {' '}
                 <nav
+                  aria-label={'Primary'}
                   style={{
                     position: 'fixed',
                     left: '0',
@@ -4542,7 +5054,7 @@ export default class StoreApp extends React.Component {
                     bottom: '0',
                     zIndex: '40',
                     background: 'var(--color-bg)',
-                    borderTop: '2px solid var(--color-text)',
+                    borderTop: '1px solid var(--color-divider)',
                     display: 'grid',
                     gridTemplateColumns: 'repeat(5,1fr)',
                     paddingBottom: 'env(safe-area-inset-bottom)',
@@ -4552,57 +5064,77 @@ export default class StoreApp extends React.Component {
                   <a
                     href={'#/'}
                     style={{
+                      position: 'relative',
                       display: 'flex',
                       flexDirection: 'column',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      gap: '3px',
+                      gap: '4px',
                       minHeight: '58px',
                       textDecoration: 'none',
-                      fontSize: '10px',
-                      fontWeight: '800',
-                      letterSpacing: '.06em',
+                      fontSize: '11px',
+                      fontWeight: '600',
                       color: v.bn?.home,
                     }}
                   >
+                    <span
+                      style={{
+                        position: 'absolute',
+                        top: '-1px',
+                        left: '28%',
+                        right: '28%',
+                        height: '2px',
+                        background: v.bnBar?.home,
+                      }}
+                    ></span>
                     <svg
                       width={'22'}
                       height={'22'}
                       viewBox={'0 0 24 24'}
                       fill={'none'}
                       stroke={'currentColor'}
-                      strokeWidth={'2'}
+                      strokeWidth={'1.8'}
                       strokeLinecap={'round'}
                       strokeLinejoin={'round'}
                     >
                       <path d={'m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'}></path>
                       <path d={'M9 22V12h6v10'}></path>
                     </svg>
-                    {'HOME'}
+                    {'Home'}
                   </a>{' '}
                   <a
                     href={'#/shop'}
                     style={{
+                      position: 'relative',
                       display: 'flex',
                       flexDirection: 'column',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      gap: '3px',
+                      gap: '4px',
                       minHeight: '58px',
                       textDecoration: 'none',
-                      fontSize: '10px',
-                      fontWeight: '800',
-                      letterSpacing: '.06em',
+                      fontSize: '11px',
+                      fontWeight: '600',
                       color: v.bn?.shop,
                     }}
                   >
+                    <span
+                      style={{
+                        position: 'absolute',
+                        top: '-1px',
+                        left: '28%',
+                        right: '28%',
+                        height: '2px',
+                        background: v.bnBar?.shop,
+                      }}
+                    ></span>
                     <svg
                       width={'22'}
                       height={'22'}
                       viewBox={'0 0 24 24'}
                       fill={'none'}
                       stroke={'currentColor'}
-                      strokeWidth={'2'}
+                      strokeWidth={'1.8'}
                       strokeLinecap={'round'}
                       strokeLinejoin={'round'}
                     >
@@ -4610,66 +5142,86 @@ export default class StoreApp extends React.Component {
                       <path d={'M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8'}></path>
                       <path d={'M2 7h20'}></path>
                     </svg>
-                    {'SHOP'}
+                    {'Shop'}
                   </a>{' '}
                   <button
-                    onClick={v.openMenu}
+                    onClick={v.focusSearch}
                     style={{
+                      position: 'relative',
                       display: 'flex',
                       flexDirection: 'column',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      gap: '3px',
+                      gap: '4px',
                       minHeight: '58px',
+                      textDecoration: 'none',
+                      fontSize: '11px',
+                      fontWeight: '600',
+                      color: v.bn?.search,
                       border: '0',
                       background: 'transparent',
-                      font: 'inherit',
-                      fontSize: '10px',
-                      fontWeight: '800',
-                      letterSpacing: '.06em',
-                      color: v.bn?.cats,
+                      fontFamily: 'inherit',
+                      cursor: 'pointer',
                     }}
                   >
+                    <span
+                      style={{
+                        position: 'absolute',
+                        top: '-1px',
+                        left: '28%',
+                        right: '28%',
+                        height: '2px',
+                        background: v.bnBar?.search,
+                      }}
+                    ></span>
                     <svg
                       width={'22'}
                       height={'22'}
                       viewBox={'0 0 24 24'}
                       fill={'none'}
                       stroke={'currentColor'}
-                      strokeWidth={'2'}
+                      strokeWidth={'1.8'}
                       strokeLinecap={'round'}
                       strokeLinejoin={'round'}
                     >
-                      <rect x={'3'} y={'3'} width={'7'} height={'7'}></rect>
-                      <rect x={'14'} y={'3'} width={'7'} height={'7'}></rect>
-                      <rect x={'14'} y={'14'} width={'7'} height={'7'}></rect>
-                      <rect x={'3'} y={'14'} width={'7'} height={'7'}></rect>
+                      <circle cx={'11'} cy={'11'} r={'8'}></circle>
+                      <path d={'m21 21-4.3-4.3'}></path>
                     </svg>
-                    {'CATEGORIES'}
+                    {'Search'}
                   </button>{' '}
                   <a
                     href={'#/wishlist'}
                     style={{
+                      position: 'relative',
                       display: 'flex',
                       flexDirection: 'column',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      gap: '3px',
+                      gap: '4px',
                       minHeight: '58px',
                       textDecoration: 'none',
-                      fontSize: '10px',
-                      fontWeight: '800',
-                      letterSpacing: '.06em',
+                      fontSize: '11px',
+                      fontWeight: '600',
                       color: v.bn?.wish,
                     }}
                   >
+                    <span
+                      style={{
+                        position: 'absolute',
+                        top: '-1px',
+                        left: '28%',
+                        right: '28%',
+                        height: '2px',
+                        background: v.bnBar?.wish,
+                      }}
+                    ></span>
                     <svg
                       width={'22'}
                       height={'22'}
                       viewBox={'0 0 24 24'}
                       fill={'none'}
                       stroke={'currentColor'}
-                      strokeWidth={'2'}
+                      strokeWidth={'1.8'}
                       strokeLinecap={'round'}
                       strokeLinejoin={'round'}
                     >
@@ -4679,38 +5231,48 @@ export default class StoreApp extends React.Component {
                         }
                       ></path>
                     </svg>
-                    {'WISHLIST'}
+                    {'Wishlist'}
                   </a>{' '}
                   <a
                     href={'#/account'}
                     style={{
+                      position: 'relative',
                       display: 'flex',
                       flexDirection: 'column',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      gap: '3px',
+                      gap: '4px',
                       minHeight: '58px',
                       textDecoration: 'none',
-                      fontSize: '10px',
-                      fontWeight: '800',
-                      letterSpacing: '.06em',
+                      fontSize: '11px',
+                      fontWeight: '600',
                       color: v.bn?.acct,
                     }}
                   >
+                    <span
+                      style={{
+                        position: 'absolute',
+                        top: '-1px',
+                        left: '28%',
+                        right: '28%',
+                        height: '2px',
+                        background: v.bnBar?.acct,
+                      }}
+                    ></span>
                     <svg
                       width={'22'}
                       height={'22'}
                       viewBox={'0 0 24 24'}
                       fill={'none'}
                       stroke={'currentColor'}
-                      strokeWidth={'2'}
+                      strokeWidth={'1.8'}
                       strokeLinecap={'round'}
                       strokeLinejoin={'round'}
                     >
                       <path d={'M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2'}></path>
                       <circle cx={'12'} cy={'7'} r={'4'}></circle>
                     </svg>
-                    {'ACCOUNT'}
+                    {'Account'}
                   </a>{' '}
                 </nav>
               </>
@@ -4725,20 +5287,20 @@ export default class StoreApp extends React.Component {
                     position: 'fixed',
                     inset: '0',
                     zIndex: '90',
-                    background: 'color-mix(in srgb, var(--color-neutral-900) 55%, transparent)',
+                    background: 'color-mix(in srgb, var(--color-neutral-900) 45%, transparent)',
                   }}
                 >
                   {' '}
                   <div
                     onClick={v.stop}
                     style={{
-                      width: 'min(360px,88%)',
+                      width: 'min(340px,86%)',
                       height: '100%',
                       overflowY: 'auto',
                       background: 'var(--color-bg)',
-                      borderRight: '2px solid var(--color-text)',
                       display: 'flex',
                       flexDirection: 'column',
+                      boxShadow: 'var(--shadow-lg)',
                     }}
                   >
                     {' '}
@@ -4747,14 +5309,14 @@ export default class StoreApp extends React.Component {
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        padding: '10px 12px 10px 16px',
-                        borderBottom: '2px solid var(--color-text)',
+                        padding: '8px 8px 8px 16px',
+                        borderBottom: '1px solid var(--color-divider)',
                       }}
                     >
                       <img
                         src={'/assets/sidequest-logo.png'}
                         alt={'SIDE QUEST'}
-                        style={{ height: '46px', width: 'auto' }}
+                        style={{ height: '40px', width: 'auto' }}
                       />
                       <button
                         onClick={v.closeMenu}
@@ -4768,6 +5330,7 @@ export default class StoreApp extends React.Component {
                           alignItems: 'center',
                           justifyContent: 'center',
                           color: 'var(--color-text)',
+                          cursor: 'pointer',
                         }}
                       >
                         <svg
@@ -4776,8 +5339,9 @@ export default class StoreApp extends React.Component {
                           viewBox={'0 0 24 24'}
                           fill={'none'}
                           stroke={'currentColor'}
-                          strokeWidth={'2.2'}
+                          strokeWidth={'2'}
                           strokeLinecap={'round'}
+                          strokeLinejoin={'round'}
                         >
                           <path d={'M18 6 6 18M6 6l12 12'}></path>
                         </svg>
@@ -4790,50 +5354,39 @@ export default class StoreApp extends React.Component {
                           href={n?.href}
                           style={{
                             display: 'flex',
-                            justifyContent: 'space-between',
                             alignItems: 'center',
-                            minHeight: '54px',
+                            minHeight: '52px',
                             padding: '0 20px',
                             borderBottom: '1px solid var(--color-divider)',
-                            fontWeight: '800',
-                            fontSize: '15px',
-                            letterSpacing: '.06em',
+                            fontWeight: '600',
+                            fontSize: '16px',
                             textDecoration: 'none',
-                            color: n?.menuColor,
+                            color: n?.color,
                           }}
                         >
                           {T(n?.label)}
-                          <span>{'→'}</span>
                         </a>{' '}
                       </React.Fragment>
                     ))}{' '}
-                    <div
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        padding: '12px 20px',
-                        gap: '2px',
-                        fontSize: '15px',
-                      }}
-                    >
+                    <div style={{ display: 'flex', flexDirection: 'column', padding: '10px 20px', fontSize: '15px' }}>
                       {' '}
                       <a
                         href={'#/about'}
-                        style={{ padding: '10px 0', color: 'var(--color-text)', textDecoration: 'none' }}
+                        style={{ padding: '11px 0', color: 'var(--color-neutral-800)', textDecoration: 'none' }}
                       >
                         {'About'}
                       </a>{' '}
                       <a
                         href={'#/contact'}
-                        style={{ padding: '10px 0', color: 'var(--color-text)', textDecoration: 'none' }}
+                        style={{ padding: '11px 0', color: 'var(--color-neutral-800)', textDecoration: 'none' }}
                       >
                         {'Contact'}
                       </a>{' '}
                       <a
                         href={'#/account'}
-                        style={{ padding: '10px 0', color: 'var(--color-text)', textDecoration: 'none' }}
+                        style={{ padding: '11px 0', color: 'var(--color-neutral-800)', textDecoration: 'none' }}
                       >
-                        {'Account'}
+                        {'Your orders'}
                       </a>{' '}
                     </div>{' '}
                   </div>{' '}
@@ -4879,9 +5432,15 @@ export default class StoreApp extends React.Component {
                 <>
                   <a
                     href={'#/cart'}
-                    style={{ color: 'var(--sq-gold)', fontWeight: '800', whiteSpace: 'nowrap', textDecoration: 'none' }}
+                    style={{
+                      color: 'var(--sq-gold)',
+                      fontWeight: '600',
+                      whiteSpace: 'nowrap',
+                      textDecoration: 'underline',
+                      textUnderlineOffset: '3px',
+                    }}
                   >
-                    {'VIEW CART →'}
+                    {'View cart'}
                   </a>
                 </>
               ) : null}{' '}

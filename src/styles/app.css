@@ -1,5 +1,5 @@
 /* SIDE QUEST brand overrides on top of the Modernist design system (modernist.css). */
-:root{--color-bg:#fcf9ed;--color-surface:#f2ede0;--sq-gold:#e6a82e}body{margin:0;background:var(--color-bg)}a{color:var(--color-accent-700)}a:hover{color:var(--color-accent)}select.input{appearance:auto}
+:root{--color-bg:#fcf9ed;--color-surface:#f2ede0;--sq-gold:#e6a82e}body{margin:0;background-color:var(--color-bg);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.13 0 0 0 0 0.12 0 0 0 0 0.10 0 0 0 .045 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}a{color:var(--color-accent-700)}a:hover{color:var(--color-accent)}select.input{appearance:auto}
 
 /* App shell */
 html, body { height: 100%; margin: 0; }
@@ -12,3 +12,13 @@ html, body { height: 100%; margin: 0; }
 .sqp3:hover{background:var(--color-surface) !important}
 .sqp4:hover{border-color:var(--color-accent) !important}
 .sqp5:hover{border-color:var(--color-text) !important}
+
+/* V5 storefront hover / focus states (generated from the V5 components' style-hover rules) */
+.sq5p0:hover{color:var(--color-accent) !important}
+.sq5p1:hover{color:var(--color-accent-700) !important}
+.sq5p2:hover{color:var(--sq-gold) !important}
+.sq5p3:hover{background:var(--color-surface) !important}
+.sq5p4:hover{border-color:var(--color-text) !important}
+.sq5p5:hover{background:var(--color-bg) !important}
+.sq5p6:hover{opacity:.92 !important}
+.sq5p7:hover{background:var(--color-text) !important;color:var(--color-bg) !important}
