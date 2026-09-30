@@ -2,7 +2,7 @@
 // Ported from SIDE QUEST Store v5.dc.html (approved V5 design) to React.
 import React from 'react';
 import { L, S, T } from './dc-compat.js';
-import Admin from './Admin.jsx';
+import Admin from './AdminV2-approved.jsx';
 import ProductCardV3 from './ProductCardV3.jsx';
 import ProductImageV3 from './ProductImageV3.jsx';
 
