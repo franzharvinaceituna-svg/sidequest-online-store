@@ -3802,7 +3802,7 @@ export default class AdminV2 extends React.Component {
                           }}
                         >
                           {' '}
-                          {L(v.storeLists).map((L, $index) => (
+                          {L(v.storeLists).map((list, $index) => (
                             <React.Fragment key={$index}>
                               {' '}
                               <section>
@@ -3828,13 +3828,13 @@ export default class AdminV2 extends React.Component {
                                       minWidth: '0',
                                     }}
                                   >
-                                    {T(L?.title)}
+                                    {T(list?.title)}
                                   </h2>
                                   <span style={{ fontSize: '12px', color: 'var(--color-neutral-700)' }}>
-                                    {T(L?.hint)}
+                                    {T(list?.hint)}
                                   </span>
                                 </div>{' '}
-                                {L(L?.rows).map((r, $index) => (
+                                {L(list?.rows).map((r, $index) => (
                                   <React.Fragment key={$index}>
                                     {' '}
                                     <div
@@ -3896,12 +3896,12 @@ export default class AdminV2 extends React.Component {
                                     </div>{' '}
                                   </React.Fragment>
                                 ))}{' '}
-                                {L?.empty ? (
+                                {list?.empty ? (
                                   <>
                                     <div
                                       style={{ padding: '20px 0', fontSize: '14px', color: 'var(--color-neutral-700)' }}
                                     >
-                                      {T(L?.emptyText)}
+                                      {T(list?.emptyText)}
                                     </div>
                                   </>
                                 ) : null}{' '}
